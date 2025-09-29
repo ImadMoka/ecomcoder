@@ -26,8 +26,11 @@ if [ -z "$SANDBOX_ID" ]; then
     exit 1
 fi
 
-# Create the directory path
-THEME_DIR="themes/user_${USER_ID}/theme_${SANDBOX_ID}"
+# Get the absolute path to the script directory
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Create the directory path (absolute)
+THEME_DIR="${SCRIPT_DIR}/themes/user_${USER_ID}/theme_${SANDBOX_ID}"
 
 echo "Creating theme directory structure: $THEME_DIR"
 
@@ -43,7 +46,7 @@ if [ -d "$THEME_DIR" ]; then
     echo "Sandbox ID: $SANDBOX_ID" >> "$THEME_DIR/README.md"
     echo "Created: $(date)" >> "$THEME_DIR/README.md"
 
-    echo "✅ Theme initialization complete"
+    echo "✅ Theme directory creation complete"
 else
     echo "❌ Failed to create directory: $THEME_DIR"
     exit 1

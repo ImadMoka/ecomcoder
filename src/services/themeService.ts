@@ -13,7 +13,10 @@ export interface ThemeCreationResult {
 export async function createThemeFolder(userId: string, sandboxId: string): Promise<ThemeCreationResult> {
   try {
     const scriptPath = path.join(process.cwd(), 'build.sh')
-    const { stdout, stderr } = await execAsync(`${scriptPath} ${userId} ${sandboxId}`)
+    const { stdout, stderr } = await execAsync(`${scriptPath} ${userId} ${sandboxId}`, {
+      timeout: 5000, // 5 seconds timeout for folder creation
+      cwd: process.cwd() // Ensure script runs from project root
+    })
 
     if (stderr) {
       console.error('Build script stderr:', stderr)
@@ -34,13 +37,62 @@ export async function createThemeFolder(userId: string, sandboxId: string): Prom
   }
 }
 
-// Future VM implementation would replace this function:
+export async function pullTheme(userId: string, sandboxId: string, storeUrl: string, apiKey: string): Promise<ThemeCreationResult> {
+  try {
+    const scriptPath = path.join(process.cwd(), 'pull-theme.sh')
+    const { stdout, stderr } = await execAsync(`${scriptPath} ${userId} ${sandboxId} ${storeUrl} ${apiKey}`, {
+      timeout: 120000, // 2 minutes timeout for shopify theme pull
+      cwd: process.cwd() // Ensure script runs from project root
+    })
+
+    if (stderr) {
+      console.error('Pull theme script stderr:', stderr)
+    }
+
+    console.log('Pull theme script output:', stdout)
+
+    return {
+      success: true,
+      output: stdout
+    }
+  } catch (error: unknown) {
+    console.error('Error executing pull theme script:', error)
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : 'Unknown error occurred'
+    }
+  }
+}
+
+// Future VM implementation would replace these functions:
 // export async function createThemeFolderOnVM(userId: string, sandboxId: string): Promise<ThemeCreationResult> {
 //   try {
 //     const result = await vmClient.executeScript({
 //       script: 'build.sh',
 //       params: { userId, sandboxId },
-//       vmInstance: 'theme-builder-vm'
+//       vmInstance: 'theme-builder-vm',
+//       timeout: 30000
+//     })
+//
+//     return {
+//       success: true,
+//       output: result.stdout
+//     }
+//   } catch (error) {
+//     return {
+//       success: false,
+//       error: error.message
+//     }
+//   }
+// }
+//
+// export async function pullThemeOnVM(userId: string, sandboxId: string, storeUrl: string, apiKey: string): Promise<ThemeCreationResult> {
+//   try {
+//     const result = await vmClient.executeScript({
+//       script: 'pull-theme.sh',
+//       params: { userId, sandboxId, storeUrl, apiKey },
+//       vmInstance: 'theme-builder-vm',
+//       timeout: 120000 // 2 minutes for shopify theme pull
 //     })
 //
 //     return {

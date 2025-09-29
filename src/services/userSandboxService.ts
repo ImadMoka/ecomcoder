@@ -69,3 +69,28 @@ export async function createUserSandbox(
     return { data: null, error: 'Unexpected database error' }
   }
 }
+
+export async function updateSandboxStatus(
+  sandboxId: string,
+  status: string
+): Promise<{ success: boolean; error: string | null }> {
+  try {
+    const { error } = await supabase
+      .from('user_sandboxes')
+      .update({
+        status: status,
+        last_used: new Date().toISOString()
+      })
+      .eq('id', sandboxId)
+
+    if (error) {
+      console.error('Error updating sandbox status:', error)
+      return { success: false, error: 'Failed to update sandbox status' }
+    }
+
+    return { success: true, error: null }
+  } catch (err) {
+    console.error('Unexpected error in updateSandboxStatus:', err)
+    return { success: false, error: 'Unexpected database error' }
+  }
+}
