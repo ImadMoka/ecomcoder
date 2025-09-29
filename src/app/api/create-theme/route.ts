@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { findUserSandbox, createUserSandbox, updateSandboxStatus, updateSandboxPreviewUrl } from '@/services/userSandboxService'
 import { createThemeFolder, pullTheme, startDevServer } from '@/services/themeService'
+import { createSession } from '@/services/sessionService'
 
 export async function POST(request: NextRequest) {
   try {
@@ -122,11 +123,35 @@ export async function POST(request: NextRequest) {
         // Don't fail the entire request, just log the warning
       }
 
+      // ==========================================
+      // STEP 4: CREATE CHAT SESSION
+      // ==========================================
+      // Create chat session for this sandbox setup
+      let sessionId: string | null = null
+      try {
+        const sessionResult = await createSession({
+          user_id: userId,
+          sandbox_id: newSandbox.id
+        })
+
+        if (sessionResult.error || !sessionResult.data) {
+          console.warn('⚠️  Failed to create chat session:', sessionResult.error)
+          // Don't fail the entire request, just log the warning
+        } else {
+          sessionId = sessionResult.data.id
+          console.log(`✅ Chat session created: ${sessionId} for user: ${userId}`)
+        }
+      } catch (error) {
+        console.warn('⚠️  Failed to create chat session:', error)
+        // Don't fail the entire request, just log the warning
+      }
+
       await updateSandboxStatus(newSandbox.id, 'ready')
 
       return NextResponse.json({
         success: true,
-        previewUrl: previewUrl
+        previewUrl: previewUrl,
+        sessionId: sessionId
       })
     } else {
       // ==========================================
