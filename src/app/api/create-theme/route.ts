@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { findUserSandbox, createUserSandbox, updateSandboxStatus } from '@/services/userSandboxService'
+import { findUserSandbox, createUserSandbox, updateSandboxStatus, updateSandboxPreviewUrl } from '@/services/userSandboxService'
 import { createThemeFolder, pullTheme, startDevServer } from '@/services/themeService'
 
 export async function POST(request: NextRequest) {
@@ -57,8 +57,6 @@ export async function POST(request: NextRequest) {
         )
       }
 
-      // Set initial status
-      await updateSandboxStatus(newSandbox.id, 'creating')
 
       // ==========================================
       // STEP 1: CREATE THEME FOLDER STRUCTURE
@@ -68,84 +66,80 @@ export async function POST(request: NextRequest) {
       if (!folderResult.success) {
         await updateSandboxStatus(newSandbox.id, 'error')
         return NextResponse.json(
-          {
-            error: 'Failed to create theme directory',
-            details: folderResult.error
-          },
+          { error: 'Failed to create theme directory' },
           { status: 500 }
         )
       }
 
-      await updateSandboxStatus(newSandbox.id, 'folder_created')
+      await updateSandboxStatus(newSandbox.id, 'created')
 
       // ==========================================
       // STEP 2: PULL THEME FROM SHOPIFY STORE
       // ==========================================
-      await updateSandboxStatus(newSandbox.id, 'pulling_theme')
+      await updateSandboxStatus(newSandbox.id, 'pulling-theme')
 
       const pullResult = await pullTheme(userId, newSandbox.id, storeUrl, apiKey)
 
       if (!pullResult.success) {
         await updateSandboxStatus(newSandbox.id, 'error')
         return NextResponse.json(
-          {
-            error: 'Failed to pull theme from Shopify',
-            details: pullResult.error,
-            folderCreated: true
-          },
+          { error: 'Failed to pull theme from Shopify' },
           { status: 500 }
         )
       }
+
+      await updateSandboxStatus(newSandbox.id, 'theme-pulled')
+
 
       // ==========================================
       // STEP 3: START DEVELOPMENT SERVER
       // ==========================================
-      await updateSandboxStatus(newSandbox.id, 'starting_dev')
+      await updateSandboxStatus(newSandbox.id, 'setting-up-dev-server')
 
-      const devResult = await startDevServer(userId, newSandbox.id, storeUrl, apiKey, storePassword)
+      const devResult = await startDevServer(userId, newSandbox.id, storeUrl, apiKey, storePassword, 'auto')
 
       if (!devResult.success) {
         await updateSandboxStatus(newSandbox.id, 'error')
         return NextResponse.json(
-          {
-            error: 'Failed to start development server',
-            details: devResult.error,
-            folderCreated: true,
-            themesPulled: true
-          },
+          { error: 'Failed to start development server' },
           { status: 500 }
         )
       }
 
       // ==========================================
-      // FINAL: MARK AS READY
+      // FINAL: SAVE PREVIEW URL AND MARK AS READY
       // ==========================================
+      // Use the proxy port (iframe-friendly URL) as the preview URL
+      const previewUrl = devResult.proxyPort
+        ? `http://127.0.0.1:${devResult.proxyPort}`
+        : `http://127.0.0.1:${devResult.assignedPort || 3000}`
+
+
+      // Save the iframe-friendly preview URL to the database
+      const urlUpdateResult = await updateSandboxPreviewUrl(newSandbox.id, previewUrl)
+      if (!urlUpdateResult.success) {
+        console.warn('⚠️  Failed to update preview URL in database:', urlUpdateResult.error)
+        // Don't fail the entire request, just log the warning
+      }
+
       await updateSandboxStatus(newSandbox.id, 'ready')
 
       return NextResponse.json({
         success: true,
-        message: `Complete! Theme created, pulled, and development server started for user ${userId} with store ${storeUrl}`,
-        userId,
-        storeUrl,
-        sandboxId: newSandbox.id,
-        isNew: true,
-        sandbox: newSandbox,
-        status: 'ready',
-        devServerUrl: `http://127.0.0.1:3000`,
-        folderOutput: folderResult.output,
-        pullOutput: pullResult.output,
-        devOutput: devResult.output
+        previewUrl: previewUrl
       })
     } else {
-      // Sandbox already exists, no need to create folder again
-      return NextResponse.json({
-        success: true,
-        message: `Sandbox already exists for user ${userId} with Shopify URL ${storeUrl}`,
-        userId,
-        storeUrl,
-        isNew: false,
-        existingRecord: existingSandbox
-      })
+      // ==========================================
+      // EXISTING SANDBOX: RETURN ERROR
+      // ==========================================
+      return NextResponse.json(
+        {
+          success: false,
+          error: 'Sandbox already exists',
+          previewUrl: existingSandbox.preview_url || null
+        },
+        { status: 409 }
+      )
     }
 
   } catch (error: unknown) {

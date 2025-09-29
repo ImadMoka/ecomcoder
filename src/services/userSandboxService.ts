@@ -30,7 +30,7 @@ export async function findUserSandbox(
   try {
     const { data, error } = await supabase
       .from('user_sandboxes')
-      .select('id, user_id, shopify_url')
+      .select('*')
       .eq('user_id', userId)
       .eq('shopify_url', shopifyUrl)
       .single()
@@ -91,6 +91,37 @@ export async function updateSandboxStatus(
     return { success: true, error: null }
   } catch (err) {
     console.error('Unexpected error in updateSandboxStatus:', err)
+    return { success: false, error: 'Unexpected database error' }
+  }
+}
+
+/**
+ * Updates the preview URL for a sandbox when the development server is ready
+ * @param sandboxId - The sandbox ID to update
+ * @param previewUrl - The iframe-friendly preview URL (proxy server URL)
+ * @returns Promise with success status and error information
+ */
+export async function updateSandboxPreviewUrl(
+  sandboxId: string,
+  previewUrl: string
+): Promise<{ success: boolean; error: string | null }> {
+  try {
+    const { error } = await supabase
+      .from('user_sandboxes')
+      .update({
+        preview_url: previewUrl,
+        last_used: new Date().toISOString()
+      })
+      .eq('id', sandboxId)
+
+    if (error) {
+      console.error('Error updating sandbox preview URL:', error)
+      return { success: false, error: 'Failed to update sandbox preview URL' }
+    }
+
+    return { success: true, error: null }
+  } catch (err) {
+    console.error('Unexpected error in updateSandboxPreviewUrl:', err)
     return { success: false, error: 'Unexpected database error' }
   }
 }
