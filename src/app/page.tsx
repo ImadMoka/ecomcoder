@@ -3,10 +3,10 @@
 import { useState } from 'react'
 
 export default function Home() {
-  const [userId, setUserId] = useState('')
-  const [storeUrl, setStoreUrl] = useState('')
-  const [storePassword, setStorePassword] = useState('')
-  const [themePassword, setThemePassword] = useState('')
+  const [userId, setUserId] = useState('bf79ab89-9aca-4ee8-9f47-f2ba66edd1ff')
+  const [storeUrl, setStoreUrl] = useState('shopyviber.myshopify.com')
+  const [storePassword, setStorePassword] = useState('soxohs')
+  const [themePassword, setThemePassword] = useState('shptka_38499bbf096f900f31b4efd0034de4f4')
   const [loading, setLoading] = useState(false)
   const [message, setMessage] = useState('')
   const [error, setError] = useState('')

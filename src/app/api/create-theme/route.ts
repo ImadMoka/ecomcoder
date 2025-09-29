@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { findUserSandbox, createUserSandbox, updateSandboxStatus } from '@/services/userSandboxService'
-import { createThemeFolder, pullTheme } from '@/services/themeService'
+import { createThemeFolder, pullTheme, startDevServer } from '@/services/themeService'
 
 export async function POST(request: NextRequest) {
   try {
@@ -57,14 +57,15 @@ export async function POST(request: NextRequest) {
         )
       }
 
-      // Update status to 'creating'
+      // Set initial status
       await updateSandboxStatus(newSandbox.id, 'creating')
 
-      // Step 1: Create theme folder for NEW sandboxes
+      // ==========================================
+      // STEP 1: CREATE THEME FOLDER STRUCTURE
+      // ==========================================
       const folderResult = await createThemeFolder(userId, newSandbox.id)
 
       if (!folderResult.success) {
-        // Update status to 'error' if folder creation fails
         await updateSandboxStatus(newSandbox.id, 'error')
         return NextResponse.json(
           {
@@ -75,42 +76,65 @@ export async function POST(request: NextRequest) {
         )
       }
 
-      // Update status to 'folder_created'
       await updateSandboxStatus(newSandbox.id, 'folder_created')
 
-      // Update status to 'pulling_theme'
+      // ==========================================
+      // STEP 2: PULL THEME FROM SHOPIFY STORE
+      // ==========================================
       await updateSandboxStatus(newSandbox.id, 'pulling_theme')
 
-      // Step 2: Pull theme from Shopify
       const pullResult = await pullTheme(userId, newSandbox.id, storeUrl, apiKey)
 
       if (!pullResult.success) {
-        // Update status to 'error' if theme pull fails
         await updateSandboxStatus(newSandbox.id, 'error')
         return NextResponse.json(
           {
             error: 'Failed to pull theme from Shopify',
             details: pullResult.error,
-            folderCreated: true // Folder was created successfully
+            folderCreated: true
           },
           { status: 500 }
         )
       }
 
-      // Update status to 'ready' after successful completion
+      // ==========================================
+      // STEP 3: START DEVELOPMENT SERVER
+      // ==========================================
+      await updateSandboxStatus(newSandbox.id, 'starting_dev')
+
+      const devResult = await startDevServer(userId, newSandbox.id, storeUrl, apiKey, storePassword)
+
+      if (!devResult.success) {
+        await updateSandboxStatus(newSandbox.id, 'error')
+        return NextResponse.json(
+          {
+            error: 'Failed to start development server',
+            details: devResult.error,
+            folderCreated: true,
+            themesPulled: true
+          },
+          { status: 500 }
+        )
+      }
+
+      // ==========================================
+      // FINAL: MARK AS READY
+      // ==========================================
       await updateSandboxStatus(newSandbox.id, 'ready')
 
       return NextResponse.json({
         success: true,
-        message: `New sandbox created! Theme directory created and Shopify theme pulled for user ${userId} with store ${storeUrl}`,
+        message: `Complete! Theme created, pulled, and development server started for user ${userId} with store ${storeUrl}`,
         userId,
         storeUrl,
         sandboxId: newSandbox.id,
         isNew: true,
         sandbox: newSandbox,
         status: 'ready',
+        devServerUrl: `http://127.0.0.1:3000`,
         folderOutput: folderResult.output,
-        pullOutput: pullResult.output
+        pullOutput: pullResult.output,
+        devOutput: devResult.output
       })
     } else {
       // Sandbox already exists, no need to create folder again
