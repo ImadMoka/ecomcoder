@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Interactive Shopify Dev Server Manager
-# Allows viewing and managing multiple dev servers
+# Shows all active development servers on ports 3000+ and 4000+
 
 set -e
 
@@ -17,69 +17,84 @@ NC='\033[0m' # No Color
 show_header() {
     clear
     echo -e "${CYAN}╭───────────────────────────────────────────────────────────────╮${NC}"
-    echo -e "${CYAN}│               🚀 Shopify Dev Server Manager                   │${NC}"
+    echo -e "${CYAN}│               🚀 Development Server Manager                   │${NC}"
     echo -e "${CYAN}│                    Interactive Dashboard                      │${NC}"
     echo -e "${CYAN}╰───────────────────────────────────────────────────────────────╯${NC}"
     echo ""
 }
 
-get_dev_servers() {
-    # Get all shopify theme dev processes
-    ps aux | grep "shopify theme dev" | grep -v grep | while read line; do
-        PID=$(echo "$line" | awk '{print $2}')
-        USER=$(echo "$line" | awk '{print $1}')
-        CPU=$(echo "$line" | awk '{print $3}')
-        MEM=$(echo "$line" | awk '{print $4}')
-        TIME=$(echo "$line" | awk '{print $10}')
+get_active_servers() {
+    # Get all processes using ports 3000+ and 4000+
+    {
+        # Get Shopify theme dev processes (3000+ range)
+        ps aux | grep "node.*shopify theme dev" | grep -v grep | while read line; do
+            PID=$(echo "$line" | awk '{print $2}')
+            PORT=$(echo "$line" | grep -o -- '--port=[0-9]*' | cut -d'=' -f2)
+            STORE=$(echo "$line" | grep -o -- '--store=[^[:space:]]*' | cut -d'=' -f2 | sed 's/"//g')
 
-        # Extract port from command
-        PORT=$(echo "$line" | grep -o -- '--port=[0-9]*' | cut -d'=' -f2)
-        if [ -z "$PORT" ]; then
-            PORT="3000" # default
-        fi
+            if [ -n "$PORT" ] && [ "$PORT" -ge 3000 ]; then
+                echo "$PID|$PORT|shopify|$STORE"
+            fi
+        done
 
-        # Extract store from command
-        STORE=$(echo "$line" | grep -o -- '--store=[^[:space:]]*' | cut -d'=' -f2)
+        # Get proxy server processes (4000+ range)
+        ps aux | grep "proxy-server-.*\.js" | grep -v grep | while read line; do
+            PID=$(echo "$line" | awk '{print $2}')
+            PORT=$(echo "$line" | awk '{for(i=1;i<=NF;i++) if($i ~ /^[0-9]+$/ && $i >= 4000) print $i}' | tail -1)
 
-        # Test if server is responding
-        HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" "http://127.0.0.1:$PORT" 2>/dev/null || echo "000")
-        if [ "$HTTP_CODE" = "200" ]; then
-            STATUS="${GREEN}✅ Online${NC}"
-        else
-            STATUS="${RED}❌ Offline${NC}"
-        fi
-
-        echo "$PID|$USER|$CPU|$MEM|$TIME|$PORT|$STORE|$STATUS"
-    done
+            if [ -n "$PORT" ] && [ "$PORT" -ge 4000 ]; then
+                echo "$PID|$PORT|proxy|N/A"
+            fi
+        done
+    } | sort -t'|' -k2 -n
 }
 
 show_servers() {
-    echo -e "${BLUE}📋 Active Shopify Dev Servers:${NC}"
-    echo -e "${CYAN}╭─────┬──────────┬───────┬───────┬──────────┬────────┬───────────────────────────┬─────────────────╮${NC}"
+    echo -e "${BLUE}📋 Active Development Servers:${NC}"
+    echo -e "${CYAN}╭─────┬────────┬──────────┬──────────┬────────────╮${NC}"
 
-    # Header with better spacing and icons
-    printf "${CYAN}│${NC} ${BLUE}%3s${NC} ${CYAN}│${NC} ${BLUE}%8s${NC} ${CYAN}│${NC} ${BLUE}%5s${NC} ${CYAN}│${NC} ${BLUE}%5s${NC} ${CYAN}│${NC} ${BLUE}%8s${NC} ${CYAN}│${NC} ${BLUE}%6s${NC} ${CYAN}│${NC} ${BLUE}%-25s${NC} ${CYAN}│${NC} ${BLUE}%-15s${NC} ${CYAN}│${NC}\n" "🆔 ID" "⚙️ PID" "📊 CPU" "💾 MEM" "⏱️ TIME" "🔌 PORT" "🏪 STORE" "📡 STATUS"
-    echo -e "${CYAN}├─────┼──────────┼───────┼───────┼──────────┼────────┼───────────────────────────┼─────────────────┤${NC}"
+    # Header
+    printf "${CYAN}│${NC} ${BLUE}%3s${NC} ${CYAN}│${NC} ${BLUE}%-6s${NC} ${CYAN}│${NC} ${BLUE}%-8s${NC} ${CYAN}│${NC} ${BLUE}%-8s${NC} ${CYAN}│${NC} ${BLUE}%-10s${NC} ${CYAN}│${NC}\\n" "ID" "PID" "TYPE" "PORT" "STATUS"
+    echo -e "${CYAN}├─────┼────────┼──────────┼──────────┼────────────┤${NC}"
 
     local counter=1
     local servers=""
 
-    while IFS='|' read -r pid user cpu mem time port store status; do
+    while IFS='|' read -r pid port type store; do
         if [ -n "$pid" ]; then
-            printf "${CYAN}│${NC} %-3s ${CYAN}│${NC} %-8s ${CYAN}│${NC} %-5s ${CYAN}│${NC} %-5s ${CYAN}│${NC} %-8s ${CYAN}│${NC} %-6s ${CYAN}│${NC} %-25s ${CYAN}│${NC} %-15s ${CYAN}│${NC}\n" "$counter" "$pid" "$cpu%" "$mem%" "$time" "$port" "${store:0:25}" "$status"
-            servers="$servers$counter:$pid:$port:$store\n"
+            # Test server status
+            if kill -0 "$pid" 2>/dev/null; then
+                if curl -s -o /dev/null -w "%{http_code}" "http://127.0.0.1:$port" 2>/dev/null | grep -q "200"; then
+                    status_display="Running"
+                else
+                    status_display="Process"
+                fi
+            else
+                status_display="Dead"
+            fi
+
+            # Format type
+            if [ "$type" = "shopify" ]; then
+                type_display="Shopify"
+            else
+                type_display="Proxy"
+            fi
+
+            printf "${CYAN}│${NC} %-3s ${CYAN}│${NC} %-6s ${CYAN}│${NC} %-8s ${CYAN}│${NC} %-8s ${CYAN}│${NC} %-10s ${CYAN}│${NC}\\n" "$counter" "$pid" "$type_display" "$port" "$status_display"
+
+            servers="${servers}${counter}:${pid}:${port}:${type}\\n"
             counter=$((counter + 1))
         fi
-    done < <(get_dev_servers)
+    done < <(get_active_servers)
 
     if [ $counter -eq 1 ]; then
-        echo -e "${CYAN}│${NC}                                   ${YELLOW}No active servers found${NC}                                   ${CYAN}│${NC}"
-        echo -e "${CYAN}╰─────────────────────────────────────────────────────────────────────────────────────────────────────╯${NC}"
+        echo -e "${CYAN}│${NC}                   ${YELLOW}No active servers found${NC}                   ${CYAN}│${NC}"
+        echo -e "${CYAN}╰─────┴────────┴──────────┴──────────┴────────────╯${NC}"
         echo ""
         return 1
     fi
 
-    echo -e "${CYAN}╰─────┴──────────┴───────┴───────┴──────────┴────────┴───────────────────────────┴─────────────────╯${NC}"
+    echo -e "${CYAN}╰─────┴────────┴──────────┴──────────┴────────────╯${NC}"
     echo ""
 
     # Store server info for later use
@@ -111,44 +126,68 @@ kill_server() {
 
     local pid=$(echo "$server_info" | cut -d':' -f2)
     local port=$(echo "$server_info" | cut -d':' -f3)
-    local store=$(echo "$server_info" | cut -d':' -f4)
+    local type=$(echo "$server_info" | cut -d':' -f4)
 
-    echo -e "${YELLOW}🔄 Killing server...${NC}"
+    echo -e "${YELLOW}🔄 Killing $type server...${NC}"
     echo "  PID: $pid"
     echo "  Port: $port"
-    echo "  Store: $store"
     echo ""
 
+    # Try normal kill first, then force kill if needed
     if kill "$pid" 2>/dev/null; then
-        echo -e "${GREEN}✅ Server killed successfully${NC}"
+        sleep 1
+        # Check if process is still running
+        if kill -0 "$pid" 2>/dev/null; then
+            echo "  Process still running, force killing..."
+            if kill -9 "$pid" 2>/dev/null; then
+                echo -e "${GREEN}✅ Server force killed successfully${NC}"
+            else
+                echo -e "${RED}❌ Failed to force kill server (PID: $pid)${NC}"
+                echo "Try: sudo kill -9 $pid"
+            fi
+        else
+            echo -e "${GREEN}✅ Server killed successfully${NC}"
+        fi
     else
         echo -e "${RED}❌ Failed to kill server (PID: $pid)${NC}"
-        echo "Try: sudo kill $pid"
+        echo "Try: sudo kill -9 $pid"
     fi
 }
 
 kill_all_servers() {
-    echo -e "${YELLOW}⚠️  Are you sure you want to kill ALL Shopify dev servers? (y/N)${NC}"
+    echo -e "${YELLOW}⚠️  Are you sure you want to kill ALL development servers? (y/N)${NC}"
     read -n 1 -r
     echo ""
 
     if [[ $REPLY =~ ^[Yy]$ ]]; then
         echo -e "${YELLOW}🔄 Killing all servers...${NC}"
-        local count=0
+        local killed_count=0
 
-        while IFS='|' read -r pid user cpu mem time port store status; do
+        while IFS='|' read -r pid port type store; do
             if [ -n "$pid" ]; then
                 if kill "$pid" 2>/dev/null; then
-                    echo "  ✅ Killed PID $pid (port $port)"
-                    count=$((count + 1))
+                    sleep 0.5
+                    # Check if process is still running
+                    if kill -0 "$pid" 2>/dev/null; then
+                        # Force kill if still running
+                        if kill -9 "$pid" 2>/dev/null; then
+                            echo "  ✅ Force killed $type PID $pid (port $port)"
+                            killed_count=$((killed_count + 1))
+                        else
+                            echo "  ❌ Failed to force kill $type PID $pid"
+                        fi
+                    else
+                        echo "  ✅ Killed $type PID $pid (port $port)"
+                        killed_count=$((killed_count + 1))
+                    fi
                 else
-                    echo "  ❌ Failed to kill PID $pid"
+                    echo "  ❌ Failed to kill $type PID $pid"
                 fi
             fi
-        done < <(get_dev_servers)
+        done < <(get_active_servers)
 
         echo ""
-        echo -e "${GREEN}🎉 Killed $count server(s)${NC}"
+        echo -e "${GREEN}🎉 Killed $killed_count server(s)${NC}"
     else
         echo -e "${BLUE}ℹ️  Operation cancelled${NC}"
     fi
@@ -189,12 +228,12 @@ show_server_details() {
 
     local pid=$(echo "$server_info" | cut -d':' -f2)
     local port=$(echo "$server_info" | cut -d':' -f3)
-    local store=$(echo "$server_info" | cut -d':' -f4)
+    local type=$(echo "$server_info" | cut -d':' -f4)
 
     echo -e "${CYAN}╭─ 📊 Server Details ─────────────────────────────────────╮${NC}"
     echo -e "${CYAN}│${NC} ⚙️  PID: ${YELLOW}$pid${NC}                                             ${CYAN}│${NC}"
     echo -e "${CYAN}│${NC} 🔌 Port: ${YELLOW}$port${NC}                                           ${CYAN}│${NC}"
-    echo -e "${CYAN}│${NC} 🏪 Store: ${YELLOW}$store${NC}                                         ${CYAN}│${NC}"
+    echo -e "${CYAN}│${NC} 📝 Type: ${YELLOW}$type${NC}                                           ${CYAN}│${NC}"
     echo -e "${CYAN}│${NC} 🌐 URL: ${BLUE}http://127.0.0.1:$port${NC}                              ${CYAN}│${NC}"
     echo -e "${CYAN}╰───────────────────────────────────────────────────────────────╯${NC}"
     echo ""
