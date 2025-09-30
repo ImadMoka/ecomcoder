@@ -12,14 +12,9 @@ export interface Session {
   status?: string
   created_at?: string
   completed_at?: string
-  conversation_id?: string
+  claude_session_id?: string
 }
 
-/**
- * Creates a new chat session for a user and sandbox
- * @param sessionData - The session data containing user_id and sandbox_id
- * @returns Promise with session data and error information
- */
 export async function createSession(
   sessionData: SessionData
 ): Promise<{ data: Session | null; error: string | null }> {
@@ -35,24 +30,15 @@ export async function createSession(
       .single()
 
     if (error) {
-      console.error('Error creating session:', error)
-      return { data: null, error: 'Failed to create chat session' }
+      return { data: null, error: 'Failed to create session' }
     }
 
-    console.log(`✅ Chat session created: ${data.id} for user: ${sessionData.user_id}, sandbox: ${sessionData.sandbox_id}`)
     return { data, error: null }
   } catch (err) {
-    console.error('Unexpected error in createSession:', err)
-    return { data: null, error: 'Unexpected database error while creating session' }
+    return { data: null, error: 'Database error' }
   }
 }
 
-/**
- * Updates the status of an existing session
- * @param sessionId - The ID of the session to update
- * @param status - The new status for the session
- * @returns Promise with success status and error information
- */
 export async function updateSessionStatus(
   sessionId: string,
   status: string
@@ -67,13 +53,91 @@ export async function updateSessionStatus(
       .eq('id', sessionId)
 
     if (error) {
-      console.error('Error updating session status:', error)
-      return { success: false, error: 'Failed to update session status' }
+      return { success: false, error: 'Failed to update status' }
     }
 
     return { success: true, error: null }
   } catch (err) {
-    console.error('Unexpected error in updateSessionStatus:', err)
-    return { success: false, error: 'Unexpected database error' }
+    return { success: false, error: 'Database error' }
+  }
+}
+
+export async function updateClaudeSessionId(
+  sessionId: string,
+  claudeSessionId: string
+): Promise<{ success: boolean; error: string | null }> {
+  try {
+    const { error } = await supabase
+      .from('agent_sessions')
+      .update({
+        claude_session_id: claudeSessionId
+      })
+      .eq('id', sessionId)
+
+    if (error) {
+      return { success: false, error: 'Failed to update Claude session' }
+    }
+
+    return { success: true, error: null }
+  } catch (err) {
+    return { success: false, error: 'Database error' }
+  }
+}
+
+export async function getThemePathFromSession(
+  sessionId: string
+): Promise<{ themePath: string | null; error: string | null }> {
+  try {
+    const { data: session, error: sessionError } = await supabase
+      .from('agent_sessions')
+      .select('sandbox_id')
+      .eq('id', sessionId)
+      .single()
+
+    if (sessionError || !session) {
+      return { themePath: null, error: 'Session not found' }
+    }
+
+    const { data: sandbox, error: sandboxError } = await supabase
+      .from('user_sandboxes')
+      .select('user_id')
+      .eq('id', session.sandbox_id)
+      .single()
+
+    if (sandboxError || !sandbox) {
+      return { themePath: null, error: 'Sandbox not found' }
+    }
+
+    const themePath = `/themes/user_${sandbox.user_id}/theme_${session.sandbox_id}`
+
+    return { themePath, error: null }
+  } catch (err) {
+    return { themePath: null, error: 'Database error' }
+  }
+}
+
+export async function createAgentActivity(
+  sessionId: string,
+  activityType: string,
+  message: string,
+  path?: string
+): Promise<{ success: boolean; error: string | null }> {
+  try {
+    const { error } = await supabase
+      .from('agent_activities')
+      .insert({
+        session_id: sessionId,
+        activity_type: activityType,
+        message: message,
+        path: path || null
+      })
+
+    if (error) {
+      return { success: false, error: 'Failed to create activity' }
+    }
+
+    return { success: true, error: null }
+  } catch (err) {
+    return { success: false, error: 'Database error' }
   }
 }
