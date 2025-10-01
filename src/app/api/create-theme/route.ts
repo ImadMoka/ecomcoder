@@ -126,13 +126,20 @@ export async function POST(request: NextRequest) {
       // ==========================================
       // FINAL: SAVE PREVIEW URL AND MARK AS READY
       // ==========================================
-      // Use the proxy port (iframe-friendly URL) as the preview URL
-      const previewUrl = devResult.proxyPort
-        ? `http://127.0.0.1:${devResult.proxyPort}`
-        : `http://127.0.0.1:${devResult.assignedPort || 3000}`
+      // PRIORITY: Use public tunnel URL if available, fallback to local proxy URL
+      // 1. devResult.publicUrl - Public ngrok URL (works from anywhere)
+      // 2. devResult.proxyPort - Local proxy URL (iframe-friendly, localhost only)
+      // 3. devResult.assignedPort - Fallback local URL
+      const previewUrl = devResult.publicUrl
+        ? devResult.publicUrl  // Public ngrok URL (preferred for remote access)
+        : devResult.proxyPort
+          ? `http://127.0.0.1:${devResult.proxyPort}`  // Local proxy URL
+          : `http://127.0.0.1:${devResult.assignedPort || 3000}`  // Fallback
 
+      console.log(`📱 Preview URL: ${previewUrl}`)
+      console.log(`   Type: ${devResult.publicUrl ? 'Public (ngrok)' : 'Local (proxy)'}`)
 
-      // Save the iframe-friendly preview URL to the database
+      // Save the preview URL (public or local) to the database
       const urlUpdateResult = await updateSandboxPreviewUrl(newSandbox.id, previewUrl)
       if (!urlUpdateResult.success) {
         console.warn('⚠️  Failed to update preview URL in database:', urlUpdateResult.error)
@@ -166,7 +173,9 @@ export async function POST(request: NextRequest) {
 
       return NextResponse.json({
         success: true,
-        previewUrl: previewUrl,
+        previewUrl: previewUrl,  // Primary URL (public or local)
+        publicUrl: devResult.publicUrl || null,  // Public ngrok URL (if available)
+        localUrl: devResult.proxyPort ? `http://127.0.0.1:${devResult.proxyPort}` : null,  // Local proxy URL
         sessionId: sessionId
       })
     } else {

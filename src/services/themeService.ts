@@ -1,6 +1,7 @@
 import { exec, spawn } from 'child_process'
 import { promisify } from 'util'
 import path from 'path'
+import { createTunnel } from './tunnelService'
 
 const execAsync = promisify(exec)
 
@@ -120,7 +121,7 @@ export async function setupClaude(userId: string, sandboxId: string): Promise<Th
  * @returns Promise with server status and port information
  * ========================================================================
  */
-export async function startDevServer(userId: string, sandboxId: string, storeUrl: string, apiKey: string, storePassword?: string, requestedPort: string | number = 'auto'): Promise<ThemeCreationResult & { assignedPort?: number; shopifyPort?: number; proxyPort?: number }> {
+export async function startDevServer(userId: string, sandboxId: string, storeUrl: string, apiKey: string, storePassword?: string, requestedPort: string | number = 'auto'): Promise<ThemeCreationResult & { assignedPort?: number; shopifyPort?: number; proxyPort?: number; publicUrl?: string }> {
   try {
     // ========================================================================
     // STEP 1: PREPARE SCRIPT EXECUTION
@@ -273,20 +274,119 @@ export async function startDevServer(userId: string, sandboxId: string, storeUrl
       }
     }
 
-    // Log successful startup with the iframe-friendly proxy URL
-    console.log(`✅ Dev server started: http://127.0.0.1:${proxyPort || assignedPort || 'unknown'}`)
+    // ========================================================================
+    // STEP 6: WAIT FOR PORT TO BE READY
+    // ========================================================================
+
+    // Determine which port to tunnel (prefer proxy port)
+    const tunnelPort = proxyPort || assignedPort || 4000
+
+    console.log(`⏳ Waiting for proxy server on port ${tunnelPort} to be ready...`)
+
+    // Wait for the port to actually be listening (max 30 seconds)
+    const isPortReady = await new Promise<boolean>((resolve) => {
+      const maxAttempts = 60 // 60 attempts * 500ms = 30 seconds
+      let attempts = 0
+
+      const checkPort = async () => {
+        attempts++
+        try {
+          const net = await import('net')
+          const socket = new net.Socket()
+
+          socket.setTimeout(1000)
+
+          socket.on('connect', () => {
+            socket.destroy()
+            console.log(`✅ Port ${tunnelPort} is ready!`)
+            resolve(true)
+          })
+
+          socket.on('timeout', () => {
+            socket.destroy()
+            if (attempts >= maxAttempts) {
+              console.warn(`⚠️  Port ${tunnelPort} not ready after ${maxAttempts * 0.5}s, continuing anyway...`)
+              resolve(false)
+            } else {
+              setTimeout(checkPort, 500)
+            }
+          })
+
+          socket.on('error', () => {
+            socket.destroy()
+            if (attempts >= maxAttempts) {
+              console.warn(`⚠️  Port ${tunnelPort} not ready after ${maxAttempts * 0.5}s, continuing anyway...`)
+              resolve(false)
+            } else {
+              setTimeout(checkPort, 500)
+            }
+          })
+
+          socket.connect(tunnelPort, '127.0.0.1')
+        } catch (err) {
+          if (attempts >= maxAttempts) {
+            console.warn(`⚠️  Port check failed, continuing anyway...`)
+            resolve(false)
+          } else {
+            setTimeout(checkPort, 500)
+          }
+        }
+      }
+
+      checkPort()
+    })
+
+    // ========================================================================
+    // STEP 7: CREATE PUBLIC TUNNEL
+    // ========================================================================
+
+    let publicTunnelUrl: string | undefined
+
+    try {
+      console.log('🌍 Creating public tunnel for remote access...')
+      const tunnelResult = await createTunnel(
+        tunnelPort,
+        userId,
+        sandboxId
+      )
+
+      if (tunnelResult.success && tunnelResult.publicUrl) {
+        publicTunnelUrl = tunnelResult.publicUrl
+        console.log(`✅ Public tunnel created: ${publicTunnelUrl}`)
+      } else {
+        console.warn('⚠️  Failed to create tunnel:', tunnelResult.error)
+        console.warn('⚠️  Continuing with local URL only')
+        // Don't fail the entire operation - local URL still works
+      }
+    } catch (tunnelError) {
+      console.warn('⚠️  Tunnel creation error:', tunnelError)
+      console.warn('⚠️  Continuing with local URL only')
+      // Continue without tunnel - local development still works
+    }
+
+    // ========================================================================
+    // STEP 8: LOG SUCCESSFUL STARTUP
+    // ========================================================================
+
+    console.log(`✅ Dev server started successfully:`)
+    console.log(`   Local:  http://127.0.0.1:${tunnelPort}`)
+    console.log(`   Public: ${publicTunnelUrl || 'Not available'}`)
 
     if (errorOutput) {
       console.warn('⚠️  Dev server warnings:', errorOutput)
     }
 
-    // Return comprehensive result with all port information
+    // ========================================================================
+    // STEP 9: RETURN COMPREHENSIVE RESULT
+    // ========================================================================
+
     return {
       success: true,
       output: `✅ Dev server with X-Frame-Options removal proxy started successfully in background.\n${output}`,
       assignedPort,    // Main port (proxy) for user access
       shopifyPort,     // Direct Shopify server port
-      proxyPort        // Proxy server port (same as assignedPort)
+      proxyPort,       // Proxy server port (same as assignedPort)
+      publicUrl: publicTunnelUrl  // Public ngrok URL (if available)
     }
   } catch (error: unknown) {
     console.error('Error starting dev server:', error)

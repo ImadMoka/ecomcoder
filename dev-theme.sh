@@ -262,8 +262,8 @@ cp "${SCRIPT_DIR}/proxy-server-template.js" "$PROXY_SCRIPT_PATH"
 
 echo "⚙️  Configuring Shopify development server..."
 
-# Build the shopify theme dev command
-SHOPIFY_CMD="shopify theme dev --store=\"$STORE_URL\" --password=\"$API_KEY\" --path=\"$THEME_DIR\" --host=127.0.0.1 --port=$SHOPIFY_PORT --error-overlay=silent"
+# Build the shopify theme dev command with hot reload enabled
+SHOPIFY_CMD="shopify theme dev --store=\"$STORE_URL\" --password=\"$API_KEY\" --path=\"$THEME_DIR\" --host=127.0.0.1 --port=$SHOPIFY_PORT --live-reload=hot-reload --error-overlay=silent"
 
 # Add store password if provided
 if [ -n "$STORE_PASSWORD" ]; then

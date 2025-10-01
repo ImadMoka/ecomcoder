@@ -10,6 +10,8 @@ export default function Home() {
   const [loading, setLoading] = useState(false)
   const [message, setMessage] = useState('')
   const [error, setError] = useState('')
+  const [publicUrl, setPublicUrl] = useState('')
+  const [localUrl, setLocalUrl] = useState('')
 
   // Chat testing state
   const [sessionId, setSessionId] = useState('')
@@ -55,7 +57,9 @@ export default function Home() {
       const data = await response.json()
 
       if (response.ok) {
-        setMessage(`✅ ${data.message}`)
+        setMessage(`✅ Theme created successfully!`)
+        setPublicUrl(data.publicUrl || '')
+        setLocalUrl(data.localUrl || data.previewUrl || '')
         // If we got a sessionId back, set it for chat testing
         if (data.sessionId) {
           setSessionId(data.sessionId)
@@ -188,8 +192,30 @@ export default function Home() {
           </button>
 
           {message && (
-            <div className="p-3 bg-green-50 border border-green-200 rounded-md text-green-800 text-sm">
-              {message}
+            <div className="p-4 bg-green-50 border border-green-200 rounded-md text-green-800 text-sm">
+              <div className="font-medium mb-2">{message}</div>
+              {publicUrl && (
+                <div className="mt-2 space-y-1">
+                  <div>
+                    <strong>🌍 Public URL (ngrok):</strong>
+                    <a href={publicUrl} target="_blank" rel="noopener noreferrer" className="ml-2 text-blue-600 hover:underline break-all">
+                      {publicUrl}
+                    </a>
+                  </div>
+                  {localUrl && (
+                    <div>
+                      <strong>🏠 Local URL:</strong>
+                      <span className="ml-2 break-all">{localUrl}</span>
+                    </div>
+                  )}
+                </div>
+              )}
+              {!publicUrl && localUrl && (
+                <div className="mt-2">
+                  <strong>Preview URL:</strong>
+                  <span className="ml-2 break-all">{localUrl}</span>
+                </div>
+              )}
             </div>
           )}
 
