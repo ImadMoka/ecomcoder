@@ -239,7 +239,7 @@ fi
 echo "   ✅ Node.js found"
 
 # Check if http-proxy module is available
-if ! node -e "require('http-proxy')" 2>/dev/null; then
+if ! node -e "import('http-proxy')" 2>/dev/null; then
     echo "⚠️  Warning: http-proxy module not found"
     echo "   Installing http-proxy..."
     npm install http-proxy 2>/dev/null || {

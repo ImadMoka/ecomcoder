@@ -34,7 +34,7 @@ export async function createSession(
     }
 
     return { data, error: null }
-  } catch (err) {
+  } catch {
     return { data: null, error: 'Database error' }
   }
 }
@@ -57,7 +57,7 @@ export async function updateSessionStatus(
     }
 
     return { success: true, error: null }
-  } catch (err) {
+  } catch {
     return { success: false, error: 'Database error' }
   }
 }
@@ -79,7 +79,7 @@ export async function updateClaudeSessionId(
     }
 
     return { success: true, error: null }
-  } catch (err) {
+  } catch {
     return { success: false, error: 'Database error' }
   }
 }
@@ -111,7 +111,7 @@ export async function getThemePathFromSession(
     const themePath = `/themes/user_${sandbox.user_id}/theme_${session.sandbox_id}`
 
     return { themePath, error: null }
-  } catch (err) {
+  } catch {
     return { themePath: null, error: 'Database error' }
   }
 }
@@ -137,7 +137,7 @@ export async function createAgentActivity(
     }
 
     return { success: true, error: null }
-  } catch (err) {
+  } catch {
     return { success: false, error: 'Database error' }
   }
 }

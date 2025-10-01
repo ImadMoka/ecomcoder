@@ -1,5 +1,5 @@
-import { createRequire } from 'module';
-const require = createRequire(import.meta.url);
+// import { createRequire } from 'module';
+// const require = createRequire(import.meta.url); // Reserved for future use
 
 
 export const SHOPIFY_AGENT_PROMPT: string = `
@@ -103,6 +103,8 @@ ADDITIONAL_TOOLS
 - Just add your desired image size (width & height) after our URL, and you'll get a random image. (https://picsum.photos/200/300)
 
 
+USER
+- All I just told you is for your information the user will now have a special request:
 ;`
 
 
@@ -114,7 +116,7 @@ import { updateClaudeSessionId, createAgentActivity } from '@/services/sessionSe
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
-export async function runThemeAssistant(customPrompt: string, existingClaudeSessionId?: string, sessionId: string): Promise<{
+export async function runThemeAssistant(customPrompt: string, existingClaudeSessionId: string | undefined, sessionId: string): Promise<{
   success: boolean;
   response: string;
   error?: string;
@@ -125,9 +127,9 @@ export async function runThemeAssistant(customPrompt: string, existingClaudeSess
   }
 
   // Use custom prompt OR environment variable OR fallback to default
-  const prompt = existingClaudeSessionId ? customPrompt : `${SHOPIFY_AGENT_PROMPT} !!Read the CLAUDE.md at first. ${customPrompt}`;
+  const prompt = existingClaudeSessionId ? customPrompt : `${SHOPIFY_AGENT_PROMPT} ${customPrompt}`;
 
-  const options: any = {
+  const options: Record<string, unknown> = {
     workingDirectory: __dirname,
     model: "claude-sonnet-4-20250514",
     permissionMode:"bypassPermissions" as const,
@@ -140,7 +142,7 @@ export async function runThemeAssistant(customPrompt: string, existingClaudeSess
   await createAgentActivity(sessionId, 'input', customPrompt);
 
 
-  let allOutputs = [];
+  const allOutputs: string[] = [];
 
   try {
     for await (const msg of query({ prompt, options })) {
@@ -160,14 +162,14 @@ export async function runThemeAssistant(customPrompt: string, existingClaudeSess
             // Extract relative path from tool input
             let relativePath = null;
             if (content.input && typeof content.input === 'object') {
-              const input = content.input as any;
+              const input = content.input as Record<string, unknown>;
               const filePath = input.file_path || input.path || input.notebook_path;
               if (filePath && typeof filePath === 'string') {
                 // Convert to relative path (remove theme directory prefix)
                 relativePath = filePath.replace(__dirname + '/', '').replace(/^\//, '');
               }
             }
-            await createAgentActivity(sessionId, 'tool', content.name, relativePath);
+            await createAgentActivity(sessionId, 'tool', content.name, relativePath || undefined);
           }
         }
       }
@@ -202,8 +204,9 @@ export async function runThemeAssistant(customPrompt: string, existingClaudeSess
       response: allOutputs.join('\n'),
     };
 
-  } catch (error) {
-    console.error("❌ Error:", error.message);
+  } catch (error: unknown) {
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    console.error("❌ Error:", errorMessage);
 
     // Log final activity if we have any outputs
     const finalOutput = allOutputs[allOutputs.length - 1] || '';
@@ -214,7 +217,7 @@ export async function runThemeAssistant(customPrompt: string, existingClaudeSess
     return {
       success: false,
       response: allOutputs.join('\n') || '',
-      error: error.message
+      error: errorMessage
     };
   }
 }
@@ -246,12 +249,13 @@ if (import.meta.url === `file://${process.argv[1]}`) {
 
       process.exit(result.success ? 0 : 1);
 
-    } catch (error) {
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       console.log('__CLAUDE_RESULT_START__');
       console.log(JSON.stringify({
         success: false,
         response: '',
-        error: error.message
+        error: errorMessage
       }));
       console.log('__CLAUDE_RESULT_END__');
       process.exit(1);

@@ -24,8 +24,8 @@
  * ========================================================================
  */
 
-const http = require('http');
-const httpProxy = require('http-proxy');
+import http from 'http';
+import httpProxy from 'http-proxy';
 
 // ========================================================================
 // STEP 1: CONFIGURATION
@@ -56,7 +56,7 @@ const proxy = httpProxy.createProxyServer({
 // STEP 3: HEADER MANIPULATION MIDDLEWARE
 // ========================================================================
 // This is the core functionality - intercept responses and strip headers
-proxy.on('proxyRes', (proxyRes, req, res) => {
+proxy.on('proxyRes', (proxyRes, req) => {
   // Log the incoming request for debugging
   console.log(`📥 Proxying: ${req.method} ${req.url}`);
 

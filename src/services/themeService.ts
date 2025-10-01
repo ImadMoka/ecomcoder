@@ -64,6 +64,33 @@ export async function pullTheme(userId: string, sandboxId: string, storeUrl: str
   }
 }
 
+export async function setupClaude(userId: string, sandboxId: string): Promise<ThemeCreationResult> {
+  try {
+    const scriptPath = path.join(process.cwd(), 'setup-claude.sh')
+    const { stdout, stderr } = await execAsync(`${scriptPath} ${userId} ${sandboxId}`, {
+      timeout: 10000, // 10 seconds timeout for Claude setup
+      cwd: process.cwd() // Ensure script runs from project root
+    })
+
+    if (stderr) {
+      console.error('Setup Claude script stderr:', stderr)
+    }
+
+    console.log('Setup Claude script output:', stdout)
+
+    return {
+      success: true,
+      output: stdout
+    }
+  } catch (error: unknown) {
+    console.error('Error executing setup Claude script:', error)
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : 'Unknown error occurred'
+    }
+  }
+}
+
 /**
  * ========================================================================
  * START DEVELOPMENT SERVER WITH X-FRAME-OPTIONS REMOVAL

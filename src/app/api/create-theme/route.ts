@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { findUserSandbox, createUserSandbox, updateSandboxStatus, updateSandboxPreviewUrl } from '@/services/userSandboxService'
-import { createThemeFolder, pullTheme, startDevServer } from '@/services/themeService'
+import { createThemeFolder, pullTheme, setupClaude, startDevServer } from '@/services/themeService'
 import { createSession } from '@/services/sessionService'
 
 export async function POST(request: NextRequest) {
@@ -91,6 +91,22 @@ export async function POST(request: NextRequest) {
 
       await updateSandboxStatus(newSandbox.id, 'theme-pulled')
 
+      // ==========================================
+      // STEP 2.5: SET UP CLAUDE INTEGRATION
+      // ==========================================
+      await updateSandboxStatus(newSandbox.id, 'setting-up-claude')
+
+      const claudeResult = await setupClaude(userId, newSandbox.id)
+
+      if (!claudeResult.success) {
+        await updateSandboxStatus(newSandbox.id, 'error')
+        return NextResponse.json(
+          { error: 'Failed to set up Claude integration' },
+          { status: 500 }
+        )
+      }
+
+      console.log('✅ Claude integration setup complete')
 
       // ==========================================
       // STEP 3: START DEVELOPMENT SERVER

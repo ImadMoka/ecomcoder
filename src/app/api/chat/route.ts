@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { supabase } from '@/lib/supabase'
 import { join } from 'path'
 import { exec } from 'child_process'
-import { updateClaudeSessionId, getThemePathFromSession } from '@/services/sessionService'
+import { getThemePathFromSession } from '@/services/sessionService'
 
 export async function POST(request: NextRequest) {
   try {
@@ -73,14 +73,14 @@ export async function POST(request: NextRequest) {
           maxBuffer: 1024 * 1024 * 10 // 10MB buffer
         }
 
-        exec(command, execOptions, (error, stdout, stderr) => {
+        exec(command, execOptions, (error, stdout) => {
           if (error) {
             reject(new Error(`Claude assistant failed: ${error.message}`))
             return
           }
 
           // Extract JSON result from stdout
-          const resultMatch = stdout.match(/__CLAUDE_RESULT_START__\n(.*)\n__CLAUDE_RESULT_END__/s)
+          const resultMatch = stdout.match(/__CLAUDE_RESULT_START__[\s\S]*?\n([\s\S]*?)\n__CLAUDE_RESULT_END__/)
           if (resultMatch) {
             try {
               const result = JSON.parse(resultMatch[1])
@@ -100,9 +100,10 @@ export async function POST(request: NextRequest) {
 
       fullResponse = result.response
 
-    } catch (processError) {
+    } catch (processError: unknown) {
+      const errorMessage = processError instanceof Error ? processError.message : 'Unknown error';
       return NextResponse.json(
-        { error: `Claude assistant failed: ${processError.message}` },
+        { error: `Claude assistant failed: ${errorMessage}` },
         { status: 500 }
       )
     }
