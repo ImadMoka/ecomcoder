@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { findUserSandbox, createUserSandbox, updateSandboxStatus, updateSandboxPreviewUrl } from '@/services/userSandboxService'
-import { createThemeFolder, pullTheme, setupClaude, startDevServer } from '@/services/themeService'
+import { findUserSandbox, createUserSandbox, updateSandboxStatus, updateSandboxPreviewUrl, updateSandboxThemeId } from '@/services/userSandboxService'
+import { createThemeFolder, pullTheme, pushTheme, setupClaude, startDevServer } from '@/services/themeService'
 import { createSession } from '@/services/sessionService'
 
 export async function POST(request: NextRequest) {
@@ -92,7 +92,33 @@ export async function POST(request: NextRequest) {
       await updateSandboxStatus(newSandbox.id, 'theme-pulled')
 
       // ==========================================
-      // STEP 2.5: SET UP CLAUDE INTEGRATION
+      // STEP 2.5: PUSH THEME AS UNPUBLISHED
+      // ==========================================
+      await updateSandboxStatus(newSandbox.id, 'pushing-theme')
+
+      const pushResult = await pushTheme(userId, newSandbox.id, storeUrl, apiKey)
+
+      if (!pushResult.success || !pushResult.themeId) {
+        await updateSandboxStatus(newSandbox.id, 'error')
+        return NextResponse.json(
+          { error: 'Failed to push theme to Shopify as unpublished' },
+          { status: 500 }
+        )
+      }
+
+      // Save theme ID to database
+      const themeIdUpdateResult = await updateSandboxThemeId(newSandbox.id, pushResult.themeId)
+      if (!themeIdUpdateResult.success) {
+        console.warn('⚠️  Failed to save theme ID to database:', themeIdUpdateResult.error)
+        // Don't fail the entire request, just log the warning
+      } else {
+        console.log(`✅ Theme ID saved: ${pushResult.themeId}`)
+      }
+
+      await updateSandboxStatus(newSandbox.id, 'theme-pushed')
+
+      // ==========================================
+      // STEP 3: SET UP CLAUDE INTEGRATION
       // ==========================================
       await updateSandboxStatus(newSandbox.id, 'setting-up-claude')
 
@@ -109,11 +135,11 @@ export async function POST(request: NextRequest) {
       console.log('✅ Claude integration setup complete')
 
       // ==========================================
-      // STEP 3: START DEVELOPMENT SERVER
+      // STEP 4: START DEVELOPMENT SERVER
       // ==========================================
       await updateSandboxStatus(newSandbox.id, 'setting-up-dev-server')
 
-      const devResult = await startDevServer(userId, newSandbox.id, storeUrl, apiKey, storePassword, 'auto')
+      const devResult = await startDevServer(userId, newSandbox.id, storeUrl, apiKey, pushResult.themeId, storePassword, 'auto')
 
       if (!devResult.success) {
         await updateSandboxStatus(newSandbox.id, 'error')
@@ -147,7 +173,7 @@ export async function POST(request: NextRequest) {
       }
 
       // ==========================================
-      // STEP 4: CREATE CHAT SESSION
+      // STEP 5: CREATE CHAT SESSION
       // ==========================================
       // Create chat session for this sandbox setup
       let sessionId: string | null = null

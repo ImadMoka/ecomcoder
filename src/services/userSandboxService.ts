@@ -17,6 +17,7 @@ export interface UserSandbox {
   shopify_store_password?: string
   sandbox_id?: string
   shopify_template_id?: string
+  theme_id?: number
   status?: string
   created_at?: string
   last_used?: string
@@ -122,6 +123,37 @@ export async function updateSandboxPreviewUrl(
     return { success: true, error: null }
   } catch (err) {
     console.error('Unexpected error in updateSandboxPreviewUrl:', err)
+    return { success: false, error: 'Unexpected database error' }
+  }
+}
+
+/**
+ * Updates the Shopify theme ID for a sandbox after pushing theme
+ * @param sandboxId - The sandbox ID to update
+ * @param themeId - The Shopify theme ID from the unpublished theme (numeric)
+ * @returns Promise with success status and error information
+ */
+export async function updateSandboxThemeId(
+  sandboxId: string,
+  themeId: number
+): Promise<{ success: boolean; error: string | null }> {
+  try {
+    const { error } = await supabase
+      .from('user_sandboxes')
+      .update({
+        theme_id: themeId,
+        last_used: new Date().toISOString()
+      })
+      .eq('id', sandboxId)
+
+    if (error) {
+      console.error('Error updating sandbox theme ID:', error)
+      return { success: false, error: 'Failed to update sandbox theme ID' }
+    }
+
+    return { success: true, error: null }
+  } catch (err) {
+    console.error('Unexpected error in updateSandboxThemeId:', err)
     return { success: false, error: 'Unexpected database error' }
   }
 }

@@ -17,11 +17,11 @@
 # 4. Starts proxy server to remove X-Frame-Options headers
 # 5. Monitors both servers and handles cleanup
 #
-# USAGE: ./dev-theme.sh <user_id> <sandbox_id> <store_url> <api_key> [store_password] [port|auto]
+# USAGE: ./dev-theme.sh <user_id> <sandbox_id> <store_url> <api_key> <theme_id> [store_password] [port|auto]
 #
 # EXAMPLES:
-# ./dev-theme.sh user123 sandbox456 store.myshopify.com shptka_abc123 password auto
-# ./dev-theme.sh user123 sandbox456 store.myshopify.com shptka_abc123 "" 4001
+# ./dev-theme.sh user123 sandbox456 store.myshopify.com shptka_abc123 108267175958 password auto
+# ./dev-theme.sh user123 sandbox456 store.myshopify.com shptka_abc123 108267175958 "" 4001
 #
 # ========================================================================
 
@@ -32,15 +32,16 @@ set -e  # Exit on any error
 # ========================================================================
 
 # Check if minimum parameters are provided
-if [ $# -lt 4 ]; then
+if [ $# -lt 6 ]; then
     echo "❌ Error: Missing parameters"
-    echo "Usage: $0 <user_id> <sandbox_id> <store_url> <api_key> [store_password] [port|auto]"
+    echo "Usage: $0 <user_id> <sandbox_id> <store_url> <api_key> <theme_id> [store_password] [port|auto]"
     echo ""
     echo "📋 Parameter Description:"
     echo "  user_id:        Unique identifier for the user"
     echo "  sandbox_id:     Unique identifier for the theme sandbox"
     echo "  store_url:      Shopify store URL (e.g., store.myshopify.com)"
     echo "  api_key:        Shopify theme access token (shptka_...)"
+    echo "  theme_id:       Shopify theme ID (numeric) - REQUIRED for unpublished development theme"
     echo "  store_password: Optional password for password-protected stores"
     echo "  port:           Target port number or 'auto' for automatic assignment"
     exit 1
@@ -51,13 +52,15 @@ USER_ID=$1
 SANDBOX_ID=$2
 STORE_URL=$3
 API_KEY=$4
-STORE_PASSWORD=${5:-""}         # Optional store password
-REQUESTED_PORT=${6:-"auto"}     # Default is auto-assign
+THEME_ID=$5                     # REQUIRED theme ID
+STORE_PASSWORD=${6:-""}         # Optional store password
+REQUESTED_PORT=${7:-"auto"}     # Default is auto-assign
 
 echo "🔧 Configuration:"
 echo "   User ID:      $USER_ID"
 echo "   Sandbox ID:   $SANDBOX_ID"
 echo "   Store URL:    $STORE_URL"
+echo "   Theme ID:     $THEME_ID"
 echo "   Port Mode:    $REQUESTED_PORT"
 echo ""
 
@@ -79,6 +82,19 @@ fi
 
 if [ -z "$API_KEY" ]; then
     echo "Error: API Key cannot be empty"
+    exit 1
+fi
+
+if [ -z "$THEME_ID" ]; then
+    echo "❌ Error: Theme ID cannot be empty"
+    echo "Theme ID is required to start the development server with the unpublished theme"
+    exit 1
+fi
+
+# Validate theme ID is numeric
+if ! [[ "$THEME_ID" =~ ^[0-9]+$ ]]; then
+    echo "❌ Error: Theme ID must be a numeric value"
+    echo "Received: $THEME_ID"
     exit 1
 fi
 
@@ -263,7 +279,10 @@ cp "${SCRIPT_DIR}/proxy-server-template.js" "$PROXY_SCRIPT_PATH"
 echo "⚙️  Configuring Shopify development server..."
 
 # Build the shopify theme dev command with hot reload enabled
-SHOPIFY_CMD="shopify theme dev --store=\"$STORE_URL\" --password=\"$API_KEY\" --path=\"$THEME_DIR\" --host=127.0.0.1 --port=$SHOPIFY_PORT --live-reload=hot-reload --error-overlay=silent"
+# ALWAYS use the theme ID to work with the specific unpublished development theme
+SHOPIFY_CMD="shopify theme dev --store=\"$STORE_URL\" --password=\"$API_KEY\" --path=\"$THEME_DIR\" --theme=$THEME_ID --host=127.0.0.1 --port=$SHOPIFY_PORT --live-reload=hot-reload --error-overlay=silent"
+
+echo "   ✅ Theme ID configured: $THEME_ID"
 
 # Add store password if provided
 if [ -n "$STORE_PASSWORD" ]; then

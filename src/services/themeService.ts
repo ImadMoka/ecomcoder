@@ -65,6 +65,52 @@ export async function pullTheme(userId: string, sandboxId: string, storeUrl: str
   }
 }
 
+export async function pushTheme(userId: string, sandboxId: string, storeUrl: string, apiKey: string): Promise<ThemeCreationResult & { themeId?: number; themeName?: string }> {
+  try {
+    const scriptPath = path.join(process.cwd(), 'push-theme.sh')
+    const { stdout, stderr } = await execAsync(`${scriptPath} ${userId} ${sandboxId} ${storeUrl} ${apiKey}`, {
+      timeout: 120000, // 2 minutes timeout for shopify theme push
+      cwd: process.cwd() // Ensure script runs from project root
+    })
+
+    if (stderr) {
+      console.error('Push theme script stderr:', stderr)
+    }
+
+    console.log('Push theme script output:', stdout)
+
+    // Extract theme ID from output
+    const themeIdMatch = stdout.match(/THEME_ID=(\d+)/)
+    const themeNameMatch = stdout.match(/THEME_NAME=(.+)/)
+
+    if (!themeIdMatch) {
+      console.error('Failed to extract theme ID from push output')
+      return {
+        success: false,
+        error: 'Failed to extract theme ID from Shopify response'
+      }
+    }
+
+    const themeId = parseInt(themeIdMatch[1], 10)
+    const themeName = themeNameMatch ? themeNameMatch[1].trim() : `ecomCoder-theme-${sandboxId}`
+
+    console.log(`✅ Theme pushed successfully - ID: ${themeId}, Name: ${themeName}`)
+
+    return {
+      success: true,
+      output: stdout,
+      themeId,
+      themeName
+    }
+  } catch (error: unknown) {
+    console.error('Error executing push theme script:', error)
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : 'Unknown error occurred'
+    }
+  }
+}
+
 export async function setupClaude(userId: string, sandboxId: string): Promise<ThemeCreationResult> {
   try {
     const scriptPath = path.join(process.cwd(), 'setup-claude.sh')
@@ -115,13 +161,270 @@ export async function setupClaude(userId: string, sandboxId: string): Promise<Th
  * @param sandboxId - Unique identifier for the theme sandbox
  * @param storeUrl - Shopify store URL (e.g., store.myshopify.com)
  * @param apiKey - Shopify theme access token (shptka_...)
+ * @param themeId - Shopify theme ID (numeric) - REQUIRED for unpublished development theme
  * @param storePassword - Optional password for password-protected stores
  * @param requestedPort - Target port number or 'auto' for automatic assignment
  *
  * @returns Promise with server status and port information
  * ========================================================================
  */
-export async function startDevServer(userId: string, sandboxId: string, storeUrl: string, apiKey: string, storePassword?: string, requestedPort: string | number = 'auto'): Promise<ThemeCreationResult & { assignedPort?: number; shopifyPort?: number; proxyPort?: number; publicUrl?: string }> {
+/**
+ * ========================================================================
+ * REFRESH DEVELOPMENT SERVER
+ * ========================================================================
+ *
+ * Kills existing development server processes and restarts them cleanly.
+ * Useful for applying configuration changes or recovering from errors.
+ *
+ * PROCESS:
+ * 1. Kills existing Shopify dev server for this sandbox
+ * 2. Kills existing proxy server for this sandbox
+ * 3. Cleans up temporary files and logs
+ * 4. Restarts both servers with updated configuration
+ *
+ * @param userId - Unique identifier for the user
+ * @param sandboxId - Unique identifier for the theme sandbox
+ * @param storeUrl - Shopify store URL (e.g., store.myshopify.com)
+ * @param apiKey - Shopify theme access token (shptka_...)
+ * @param themeId - Shopify theme ID (numeric) - REQUIRED
+ * @param storePassword - Optional password for password-protected stores
+ * @param requestedPort - Target port number or 'auto' for automatic assignment
+ *
+ * @returns Promise with server status and port information
+ * ========================================================================
+ */
+export async function refreshDevServer(userId: string, sandboxId: string, storeUrl: string, apiKey: string, themeId: number, storePassword?: string, requestedPort: string | number = 'auto'): Promise<ThemeCreationResult & { assignedPort?: number; shopifyPort?: number; proxyPort?: number; publicUrl?: string }> {
+  try {
+    const scriptPath = path.join(process.cwd(), 'refresh-dev-server.sh')
+    const args = [userId, sandboxId, storeUrl, apiKey]
+
+    // Add parameters in correct order: themeId (required), storePassword, port
+    args.push(themeId.toString())  // Theme ID is required
+    args.push(storePassword || '')  // Empty string if no store password
+    args.push(requestedPort.toString())
+
+    console.log('🔄 Refreshing development server...')
+    console.log(`   User: ${userId} | Sandbox: ${sandboxId}`)
+    console.log(`   Theme ID: ${themeId}`)
+
+    // Start refresh process in background with proper process isolation
+    const child = spawn(scriptPath, args, {
+      cwd: process.cwd(),
+      detached: true,          // Run independently of parent process
+      stdio: ['ignore', 'pipe', 'pipe']  // Capture stdout/stderr for monitoring
+    })
+
+    let output = ''
+    let errorOutput = ''
+    let assignedPort: number | undefined
+    let shopifyPort: number | undefined
+    let proxyPort: number | undefined
+
+    // Set up timeout for initial startup monitoring
+    const timeout = setTimeout(() => {
+      child.stdout?.removeAllListeners()
+      child.stderr?.removeAllListeners()
+    }, 30000)  // 30 seconds for both servers to restart
+
+    // Monitor stdout for port assignments
+    child.stdout?.on('data', (data) => {
+      const dataStr = data.toString()
+      output += dataStr
+
+      // Extract ports from output
+      const assignedPortMatch = dataStr.match(/ASSIGNED_PORT=(\d+)/) || output.match(/ASSIGNED_PORT=(\d+)/)
+      const proxyPortHumanMatch = dataStr.match(/Proxy Port:\s+(\d+)/) || output.match(/Proxy Port:\s+(\d+)/)
+
+      if (assignedPortMatch) {
+        assignedPort = parseInt(assignedPortMatch[1], 10)
+        proxyPort = assignedPort
+      } else if (proxyPortHumanMatch) {
+        proxyPort = parseInt(proxyPortHumanMatch[1], 10)
+        assignedPort = proxyPort
+      }
+
+      const shopifyPortMatch = dataStr.match(/SHOPIFY_PORT=(\d+)/) || output.match(/SHOPIFY_PORT=(\d+)/)
+      const shopifyPortHumanMatch = dataStr.match(/Shopify Port:\s+(\d+)/) || output.match(/Shopify Port:\s+(\d+)/)
+
+      if (shopifyPortMatch) {
+        shopifyPort = parseInt(shopifyPortMatch[1], 10)
+      } else if (shopifyPortHumanMatch) {
+        shopifyPort = parseInt(shopifyPortHumanMatch[1], 10)
+      }
+
+      const proxyPortMatch = dataStr.match(/PROXY_PORT=(\d+)/) || output.match(/PROXY_PORT=(\d+)/)
+      if (proxyPortMatch) {
+        proxyPort = parseInt(proxyPortMatch[1], 10)
+        assignedPort = proxyPort
+      }
+    })
+
+    // Monitor stderr for errors
+    child.stderr?.on('data', (data) => {
+      errorOutput += data.toString()
+    })
+
+    // Wait for startup confirmation
+    await new Promise((resolve, reject) => {
+      const checkOutput = () => {
+        if (output.includes('🎉 Both servers are running!') ||
+            output.includes('Development servers will be available at:') ||
+            output.includes('Starting Shopify theme development server')) {
+          clearTimeout(timeout)
+          resolve(true)
+        }
+      }
+
+      child.stdout?.on('data', checkOutput)
+
+      child.on('error', (error) => {
+        clearTimeout(timeout)
+        reject(error)
+      })
+
+      setTimeout(() => {
+        clearTimeout(timeout)
+        resolve(true)
+      }, 30000)
+    })
+
+    // Detach the process
+    child.unref()
+
+    // Final port extraction
+    if (!assignedPort || !shopifyPort || !proxyPort) {
+      const finalAssignedMatch = output.match(/ASSIGNED_PORT=(\d+)/)
+      const finalProxyHumanMatch = output.match(/Proxy Port:\s+(\d+)/)
+
+      if (finalAssignedMatch && !assignedPort) {
+        assignedPort = parseInt(finalAssignedMatch[1], 10)
+        proxyPort = assignedPort
+      } else if (finalProxyHumanMatch && !proxyPort) {
+        proxyPort = parseInt(finalProxyHumanMatch[1], 10)
+        assignedPort = proxyPort
+      }
+
+      const finalShopifyMatch = output.match(/SHOPIFY_PORT=(\d+)/)
+      const finalShopifyHumanMatch = output.match(/Shopify Port:\s+(\d+)/)
+
+      if (finalShopifyMatch && !shopifyPort) {
+        shopifyPort = parseInt(finalShopifyMatch[1], 10)
+      } else if (finalShopifyHumanMatch && !shopifyPort) {
+        shopifyPort = parseInt(finalShopifyHumanMatch[1], 10)
+      }
+
+      const finalProxyMatch = output.match(/PROXY_PORT=(\d+)/)
+      if (finalProxyMatch && !proxyPort) {
+        proxyPort = parseInt(finalProxyMatch[1], 10)
+        assignedPort = proxyPort
+      }
+    }
+
+    // Wait for port to be ready
+    const tunnelPort = proxyPort || assignedPort || 4000
+    console.log(`⏳ Waiting for proxy server on port ${tunnelPort} to be ready...`)
+
+    const isPortReady = await new Promise<boolean>((resolve) => {
+      const maxAttempts = 60
+      let attempts = 0
+
+      const checkPort = async () => {
+        attempts++
+        try {
+          const net = await import('net')
+          const socket = new net.Socket()
+
+          socket.setTimeout(1000)
+
+          socket.on('connect', () => {
+            socket.destroy()
+            console.log(`✅ Port ${tunnelPort} is ready!`)
+            resolve(true)
+          })
+
+          socket.on('timeout', () => {
+            socket.destroy()
+            if (attempts >= maxAttempts) {
+              console.warn(`⚠️  Port ${tunnelPort} not ready after ${maxAttempts * 0.5}s, continuing anyway...`)
+              resolve(false)
+            } else {
+              setTimeout(checkPort, 500)
+            }
+          })
+
+          socket.on('error', () => {
+            socket.destroy()
+            if (attempts >= maxAttempts) {
+              console.warn(`⚠️  Port ${tunnelPort} not ready after ${maxAttempts * 0.5}s, continuing anyway...`)
+              resolve(false)
+            } else {
+              setTimeout(checkPort, 500)
+            }
+          })
+
+          socket.connect(tunnelPort, '127.0.0.1')
+        } catch (err) {
+          if (attempts >= maxAttempts) {
+            console.warn(`⚠️  Port check failed, continuing anyway...`)
+            resolve(false)
+          } else {
+            setTimeout(checkPort, 500)
+          }
+        }
+      }
+
+      checkPort()
+    })
+
+    // Create public tunnel
+    let publicTunnelUrl: string | undefined
+
+    try {
+      console.log('🌍 Creating public tunnel for remote access...')
+      const tunnelResult = await createTunnel(
+        tunnelPort,
+        userId,
+        sandboxId
+      )
+
+      if (tunnelResult.success && tunnelResult.publicUrl) {
+        publicTunnelUrl = tunnelResult.publicUrl
+        console.log(`✅ Public tunnel created: ${publicTunnelUrl}`)
+      } else {
+        console.warn('⚠️  Failed to create tunnel:', tunnelResult.error)
+        console.warn('⚠️  Continuing with local URL only')
+      }
+    } catch (tunnelError) {
+      console.warn('⚠️  Tunnel creation error:', tunnelError)
+      console.warn('⚠️  Continuing with local URL only')
+    }
+
+    console.log(`✅ Dev server refreshed successfully:`)
+    console.log(`   Local:  http://127.0.0.1:${tunnelPort}`)
+    console.log(`   Public: ${publicTunnelUrl || 'Not available'}`)
+
+    if (errorOutput) {
+      console.warn('⚠️  Dev server warnings:', errorOutput)
+    }
+
+    return {
+      success: true,
+      output: `✅ Dev server refreshed successfully.\n${output}`,
+      assignedPort,
+      shopifyPort,
+      proxyPort,
+      publicUrl: publicTunnelUrl
+    }
+  } catch (error: unknown) {
+    console.error('Error refreshing dev server:', error)
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : 'Unknown error occurred'
+    }
+  }
+}
+
+export async function startDevServer(userId: string, sandboxId: string, storeUrl: string, apiKey: string, themeId: number, storePassword?: string, requestedPort: string | number = 'auto'): Promise<ThemeCreationResult & { assignedPort?: number; shopifyPort?: number; proxyPort?: number; publicUrl?: string }> {
   try {
     // ========================================================================
     // STEP 1: PREPARE SCRIPT EXECUTION
@@ -130,10 +433,9 @@ export async function startDevServer(userId: string, sandboxId: string, storeUrl
     const scriptPath = path.join(process.cwd(), 'dev-theme.sh')
     const args = [userId, sandboxId, storeUrl, apiKey]
 
-    // Add optional parameters
-    if (storePassword) {
-      args.push(storePassword)
-    }
+    // Add parameters in correct order: themeId (required), storePassword, port
+    args.push(themeId.toString())  // Theme ID is required
+    args.push(storePassword || '')  // Empty string if no store password
     args.push(requestedPort.toString())
 
     // ========================================================================
