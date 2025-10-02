@@ -115,8 +115,17 @@ export async function createTunnel(
       console.log(`   Using free tier (no authtoken)`)
     }
 
-    // ===== START TUNNEL =====
-    const listener = await ngrok.forward(config)
+    // ===== START TUNNEL WITH TIMEOUT =====
+    console.log(`   Connecting to ngrok... (timeout: 15s)`)
+
+    const listener = await Promise.race([
+      ngrok.forward(config),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error('ngrok connection timeout after 15s - falling back to local URL')), 15000)
+      )
+    ])
+
+    console.log(`   ngrok connected, retrieving URL...`)
     const publicUrl = listener.url()
 
     // Ensure we got a valid URL

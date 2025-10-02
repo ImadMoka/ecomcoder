@@ -1,7 +1,7 @@
 import { exec, spawn } from 'child_process'
 import { promisify } from 'util'
 import path from 'path'
-import { createTunnel } from './tunnelService'
+import { createTunnel, closeTunnel } from './tunnelService'
 
 const execAsync = promisify(exec)
 
@@ -42,7 +42,7 @@ export async function pullTheme(userId: string, sandboxId: string, storeUrl: str
   try {
     const scriptPath = path.join(process.cwd(), 'pull-theme.sh')
     const { stdout, stderr } = await execAsync(`${scriptPath} ${userId} ${sandboxId} ${storeUrl} ${apiKey}`, {
-      timeout: 120000, // 2 minutes timeout for shopify theme pull
+      timeout: 600000, // 10 minutes timeout for shopify theme pull (367 files can take a while)
       cwd: process.cwd() // Ensure script runs from project root
     })
 
@@ -69,7 +69,7 @@ export async function pushTheme(userId: string, sandboxId: string, storeUrl: str
   try {
     const scriptPath = path.join(process.cwd(), 'push-theme.sh')
     const { stdout, stderr } = await execAsync(`${scriptPath} ${userId} ${sandboxId} ${storeUrl} ${apiKey}`, {
-      timeout: 120000, // 2 minutes timeout for shopify theme push
+      timeout: 600000, // 10 minutes timeout for shopify theme push (367 files can take a while)
       cwd: process.cwd() // Ensure script runs from project root
     })
 
@@ -173,248 +173,40 @@ export async function setupClaude(userId: string, sandboxId: string): Promise<Th
  * REFRESH DEVELOPMENT SERVER
  * ========================================================================
  *
- * Kills existing development server processes and restarts them cleanly.
- * Useful for applying configuration changes or recovering from errors.
- *
- * PROCESS:
- * 1. Kills existing Shopify dev server for this sandbox
- * 2. Kills existing proxy server for this sandbox
- * 3. Cleans up temporary files and logs
- * 4. Restarts both servers with updated configuration
+ * Simplified refresh: closes old tunnel and restarts servers.
+ * dev-theme.sh handles all process cleanup (zombie killing) automatically.
  *
  * @param userId - Unique identifier for the user
  * @param sandboxId - Unique identifier for the theme sandbox
  * @param storeUrl - Shopify store URL (e.g., store.myshopify.com)
  * @param apiKey - Shopify theme access token (shptka_...)
  * @param themeId - Shopify theme ID (numeric) - REQUIRED
+ * @param devPort - Shopify dev server port (from database)
+ * @param proxyPort - Proxy server port (from database)
  * @param storePassword - Optional password for password-protected stores
- * @param requestedPort - Target port number or 'auto' for automatic assignment
  *
  * @returns Promise with server status and port information
  * ========================================================================
  */
-export async function refreshDevServer(userId: string, sandboxId: string, storeUrl: string, apiKey: string, themeId: number, storePassword?: string, requestedPort: string | number = 'auto'): Promise<ThemeCreationResult & { assignedPort?: number; shopifyPort?: number; proxyPort?: number; publicUrl?: string }> {
+export async function refreshDevServer(
+  userId: string,
+  sandboxId: string,
+  storeUrl: string,
+  apiKey: string,
+  themeId: number,
+  devPort: number,
+  proxyPort: number,
+  storePassword?: string
+): Promise<ThemeCreationResult & { assignedPort?: number; shopifyPort?: number; proxyPort?: number; publicUrl?: string }> {
   try {
-    const scriptPath = path.join(process.cwd(), 'refresh-dev-server.sh')
-    const args = [userId, sandboxId, storeUrl, apiKey]
-
-    // Add parameters in correct order: themeId (required), storePassword, port
-    args.push(themeId.toString())  // Theme ID is required
-    args.push(storePassword || '')  // Empty string if no store password
-    args.push(requestedPort.toString())
-
     console.log('🔄 Refreshing development server...')
     console.log(`   User: ${userId} | Sandbox: ${sandboxId}`)
-    console.log(`   Theme ID: ${themeId}`)
 
-    // Start refresh process in background with proper process isolation
-    const child = spawn(scriptPath, args, {
-      cwd: process.cwd(),
-      detached: true,          // Run independently of parent process
-      stdio: ['ignore', 'pipe', 'pipe']  // Capture stdout/stderr for monitoring
-    })
+    // Close old tunnel
+    await closeTunnel(userId, sandboxId)
 
-    let output = ''
-    let errorOutput = ''
-    let assignedPort: number | undefined
-    let shopifyPort: number | undefined
-    let proxyPort: number | undefined
-
-    // Set up timeout for initial startup monitoring
-    const timeout = setTimeout(() => {
-      child.stdout?.removeAllListeners()
-      child.stderr?.removeAllListeners()
-    }, 30000)  // 30 seconds for both servers to restart
-
-    // Monitor stdout for port assignments
-    child.stdout?.on('data', (data) => {
-      const dataStr = data.toString()
-      output += dataStr
-
-      // Extract ports from output
-      const assignedPortMatch = dataStr.match(/ASSIGNED_PORT=(\d+)/) || output.match(/ASSIGNED_PORT=(\d+)/)
-      const proxyPortHumanMatch = dataStr.match(/Proxy Port:\s+(\d+)/) || output.match(/Proxy Port:\s+(\d+)/)
-
-      if (assignedPortMatch) {
-        assignedPort = parseInt(assignedPortMatch[1], 10)
-        proxyPort = assignedPort
-      } else if (proxyPortHumanMatch) {
-        proxyPort = parseInt(proxyPortHumanMatch[1], 10)
-        assignedPort = proxyPort
-      }
-
-      const shopifyPortMatch = dataStr.match(/SHOPIFY_PORT=(\d+)/) || output.match(/SHOPIFY_PORT=(\d+)/)
-      const shopifyPortHumanMatch = dataStr.match(/Shopify Port:\s+(\d+)/) || output.match(/Shopify Port:\s+(\d+)/)
-
-      if (shopifyPortMatch) {
-        shopifyPort = parseInt(shopifyPortMatch[1], 10)
-      } else if (shopifyPortHumanMatch) {
-        shopifyPort = parseInt(shopifyPortHumanMatch[1], 10)
-      }
-
-      const proxyPortMatch = dataStr.match(/PROXY_PORT=(\d+)/) || output.match(/PROXY_PORT=(\d+)/)
-      if (proxyPortMatch) {
-        proxyPort = parseInt(proxyPortMatch[1], 10)
-        assignedPort = proxyPort
-      }
-    })
-
-    // Monitor stderr for errors
-    child.stderr?.on('data', (data) => {
-      errorOutput += data.toString()
-    })
-
-    // Wait for startup confirmation
-    await new Promise((resolve, reject) => {
-      const checkOutput = () => {
-        if (output.includes('🎉 Both servers are running!') ||
-            output.includes('Development servers will be available at:') ||
-            output.includes('Starting Shopify theme development server')) {
-          clearTimeout(timeout)
-          resolve(true)
-        }
-      }
-
-      child.stdout?.on('data', checkOutput)
-
-      child.on('error', (error) => {
-        clearTimeout(timeout)
-        reject(error)
-      })
-
-      setTimeout(() => {
-        clearTimeout(timeout)
-        resolve(true)
-      }, 30000)
-    })
-
-    // Detach the process
-    child.unref()
-
-    // Final port extraction
-    if (!assignedPort || !shopifyPort || !proxyPort) {
-      const finalAssignedMatch = output.match(/ASSIGNED_PORT=(\d+)/)
-      const finalProxyHumanMatch = output.match(/Proxy Port:\s+(\d+)/)
-
-      if (finalAssignedMatch && !assignedPort) {
-        assignedPort = parseInt(finalAssignedMatch[1], 10)
-        proxyPort = assignedPort
-      } else if (finalProxyHumanMatch && !proxyPort) {
-        proxyPort = parseInt(finalProxyHumanMatch[1], 10)
-        assignedPort = proxyPort
-      }
-
-      const finalShopifyMatch = output.match(/SHOPIFY_PORT=(\d+)/)
-      const finalShopifyHumanMatch = output.match(/Shopify Port:\s+(\d+)/)
-
-      if (finalShopifyMatch && !shopifyPort) {
-        shopifyPort = parseInt(finalShopifyMatch[1], 10)
-      } else if (finalShopifyHumanMatch && !shopifyPort) {
-        shopifyPort = parseInt(finalShopifyHumanMatch[1], 10)
-      }
-
-      const finalProxyMatch = output.match(/PROXY_PORT=(\d+)/)
-      if (finalProxyMatch && !proxyPort) {
-        proxyPort = parseInt(finalProxyMatch[1], 10)
-        assignedPort = proxyPort
-      }
-    }
-
-    // Wait for port to be ready
-    const tunnelPort = proxyPort || assignedPort || 4000
-    console.log(`⏳ Waiting for proxy server on port ${tunnelPort} to be ready...`)
-
-    const isPortReady = await new Promise<boolean>((resolve) => {
-      const maxAttempts = 60
-      let attempts = 0
-
-      const checkPort = async () => {
-        attempts++
-        try {
-          const net = await import('net')
-          const socket = new net.Socket()
-
-          socket.setTimeout(1000)
-
-          socket.on('connect', () => {
-            socket.destroy()
-            console.log(`✅ Port ${tunnelPort} is ready!`)
-            resolve(true)
-          })
-
-          socket.on('timeout', () => {
-            socket.destroy()
-            if (attempts >= maxAttempts) {
-              console.warn(`⚠️  Port ${tunnelPort} not ready after ${maxAttempts * 0.5}s, continuing anyway...`)
-              resolve(false)
-            } else {
-              setTimeout(checkPort, 500)
-            }
-          })
-
-          socket.on('error', () => {
-            socket.destroy()
-            if (attempts >= maxAttempts) {
-              console.warn(`⚠️  Port ${tunnelPort} not ready after ${maxAttempts * 0.5}s, continuing anyway...`)
-              resolve(false)
-            } else {
-              setTimeout(checkPort, 500)
-            }
-          })
-
-          socket.connect(tunnelPort, '127.0.0.1')
-        } catch (err) {
-          if (attempts >= maxAttempts) {
-            console.warn(`⚠️  Port check failed, continuing anyway...`)
-            resolve(false)
-          } else {
-            setTimeout(checkPort, 500)
-          }
-        }
-      }
-
-      checkPort()
-    })
-
-    // Create public tunnel
-    let publicTunnelUrl: string | undefined
-
-    try {
-      console.log('🌍 Creating public tunnel for remote access...')
-      const tunnelResult = await createTunnel(
-        tunnelPort,
-        userId,
-        sandboxId
-      )
-
-      if (tunnelResult.success && tunnelResult.publicUrl) {
-        publicTunnelUrl = tunnelResult.publicUrl
-        console.log(`✅ Public tunnel created: ${publicTunnelUrl}`)
-      } else {
-        console.warn('⚠️  Failed to create tunnel:', tunnelResult.error)
-        console.warn('⚠️  Continuing with local URL only')
-      }
-    } catch (tunnelError) {
-      console.warn('⚠️  Tunnel creation error:', tunnelError)
-      console.warn('⚠️  Continuing with local URL only')
-    }
-
-    console.log(`✅ Dev server refreshed successfully:`)
-    console.log(`   Local:  http://127.0.0.1:${tunnelPort}`)
-    console.log(`   Public: ${publicTunnelUrl || 'Not available'}`)
-
-    if (errorOutput) {
-      console.warn('⚠️  Dev server warnings:', errorOutput)
-    }
-
-    return {
-      success: true,
-      output: `✅ Dev server refreshed successfully.\n${output}`,
-      assignedPort,
-      shopifyPort,
-      proxyPort,
-      publicUrl: publicTunnelUrl
-    }
+    // Restart servers (dev-theme.sh handles process cleanup automatically)
+    return await startDevServer(userId, sandboxId, storeUrl, apiKey, themeId, devPort, proxyPort, storePassword)
   } catch (error: unknown) {
     console.error('Error refreshing dev server:', error)
     return {
@@ -424,7 +216,16 @@ export async function refreshDevServer(userId: string, sandboxId: string, storeU
   }
 }
 
-export async function startDevServer(userId: string, sandboxId: string, storeUrl: string, apiKey: string, themeId: number, storePassword?: string, requestedPort: string | number = 'auto'): Promise<ThemeCreationResult & { assignedPort?: number; shopifyPort?: number; proxyPort?: number; publicUrl?: string }> {
+export async function startDevServer(
+  userId: string,
+  sandboxId: string,
+  storeUrl: string,
+  apiKey: string,
+  themeId: number,
+  devPort: number,
+  proxyPort: number,
+  storePassword?: string
+): Promise<ThemeCreationResult & { assignedPort?: number; shopifyPort?: number; proxyPort?: number; publicUrl?: string }> {
   try {
     // ========================================================================
     // STEP 1: PREPARE SCRIPT EXECUTION
@@ -433,10 +234,11 @@ export async function startDevServer(userId: string, sandboxId: string, storeUrl
     const scriptPath = path.join(process.cwd(), 'dev-theme.sh')
     const args = [userId, sandboxId, storeUrl, apiKey]
 
-    // Add parameters in correct order: themeId (required), storePassword, port
-    args.push(themeId.toString())  // Theme ID is required
-    args.push(storePassword || '')  // Empty string if no store password
-    args.push(requestedPort.toString())
+    // Add parameters in correct order: themeId, devPort, proxyPort, storePassword
+    args.push(themeId.toString())       // Theme ID is required
+    args.push(devPort.toString())       // Dev server port (from port allocation)
+    args.push(proxyPort.toString())     // Proxy server port (from port allocation)
+    args.push(storePassword || '')      // Empty string if no store password
 
     // ========================================================================
     // STEP 2: SPAWN DEVELOPMENT SERVER PROCESS
@@ -450,14 +252,14 @@ export async function startDevServer(userId: string, sandboxId: string, storeUrl
     })
 
     // ========================================================================
-    // STEP 3: OUTPUT MONITORING AND PORT EXTRACTION
+    // STEP 3: OUTPUT MONITORING
     // ========================================================================
+    // Ports are now passed as parameters (pre-allocated from database)
+    // No need to extract from output - we already know them!
 
     let output = ''
     let errorOutput = ''
-    let assignedPort: number | undefined    // Main proxy port (user-facing)
-    let shopifyPort: number | undefined     // Direct Shopify server port
-    let proxyPort: number | undefined       // Proxy server port (same as assignedPort)
+    const assignedPort = proxyPort  // Main user-facing port is the proxy port
 
     // Set up timeout for initial startup monitoring (extended for dual-server setup)
     const timeout = setTimeout(() => {
@@ -465,40 +267,10 @@ export async function startDevServer(userId: string, sandboxId: string, storeUrl
       child.stderr?.removeAllListeners()
     }, 30000)  // 30 seconds for both servers to start
 
-    // Monitor stdout for port assignments and startup confirmation
+    // Monitor stdout for startup confirmation and logging
     child.stdout?.on('data', (data) => {
       const dataStr = data.toString()
       output += dataStr
-
-      // ===== PORT EXTRACTION FROM SCRIPT OUTPUT =====
-      // Extract ports from the actual output format we're seeing
-
-      // Try both machine-readable format and human-readable format
-      const assignedPortMatch = dataStr.match(/ASSIGNED_PORT=(\d+)/) || output.match(/ASSIGNED_PORT=(\d+)/)
-      const proxyPortHumanMatch = dataStr.match(/Proxy Port:\s+(\d+)/) || output.match(/Proxy Port:\s+(\d+)/)
-
-      if (assignedPortMatch) {
-        assignedPort = parseInt(assignedPortMatch[1], 10)
-        proxyPort = assignedPort
-      } else if (proxyPortHumanMatch) {
-        proxyPort = parseInt(proxyPortHumanMatch[1], 10)
-        assignedPort = proxyPort
-      }
-
-      const shopifyPortMatch = dataStr.match(/SHOPIFY_PORT=(\d+)/) || output.match(/SHOPIFY_PORT=(\d+)/)
-      const shopifyPortHumanMatch = dataStr.match(/Shopify Port:\s+(\d+)/) || output.match(/Shopify Port:\s+(\d+)/)
-
-      if (shopifyPortMatch) {
-        shopifyPort = parseInt(shopifyPortMatch[1], 10)
-      } else if (shopifyPortHumanMatch) {
-        shopifyPort = parseInt(shopifyPortHumanMatch[1], 10)
-      }
-
-      const proxyPortMatch = dataStr.match(/PROXY_PORT=(\d+)/) || output.match(/PROXY_PORT=(\d+)/)
-      if (proxyPortMatch) {
-        proxyPort = parseInt(proxyPortMatch[1], 10)
-        assignedPort = proxyPort
-      }
     })
 
     // Monitor stderr for errors
@@ -538,50 +310,18 @@ export async function startDevServer(userId: string, sandboxId: string, storeUrl
     })
 
     // ========================================================================
-    // STEP 5: PROCESS DETACHMENT AND SUCCESS RESPONSE
+    // STEP 5: PROCESS DETACHMENT
     // ========================================================================
 
     // Detach the process so it continues running independently
     child.unref()
 
     // ========================================================================
-    // FINAL PORT EXTRACTION ATTEMPT
-    // ========================================================================
-    // Try to extract ports from complete output one more time
-    if (!assignedPort || !shopifyPort || !proxyPort) {
-      const finalAssignedMatch = output.match(/ASSIGNED_PORT=(\d+)/)
-      const finalProxyHumanMatch = output.match(/Proxy Port:\s+(\d+)/)
-
-      if (finalAssignedMatch && !assignedPort) {
-        assignedPort = parseInt(finalAssignedMatch[1], 10)
-        proxyPort = assignedPort
-      } else if (finalProxyHumanMatch && !proxyPort) {
-        proxyPort = parseInt(finalProxyHumanMatch[1], 10)
-        assignedPort = proxyPort
-      }
-
-      const finalShopifyMatch = output.match(/SHOPIFY_PORT=(\d+)/)
-      const finalShopifyHumanMatch = output.match(/Shopify Port:\s+(\d+)/)
-
-      if (finalShopifyMatch && !shopifyPort) {
-        shopifyPort = parseInt(finalShopifyMatch[1], 10)
-      } else if (finalShopifyHumanMatch && !shopifyPort) {
-        shopifyPort = parseInt(finalShopifyHumanMatch[1], 10)
-      }
-
-      const finalProxyMatch = output.match(/PROXY_PORT=(\d+)/)
-      if (finalProxyMatch && !proxyPort) {
-        proxyPort = parseInt(finalProxyMatch[1], 10)
-        assignedPort = proxyPort
-      }
-    }
-
-    // ========================================================================
     // STEP 6: WAIT FOR PORT TO BE READY
     // ========================================================================
 
-    // Determine which port to tunnel (prefer proxy port)
-    const tunnelPort = proxyPort || assignedPort || 4000
+    // The tunnel port is the proxy port (user-facing)
+    const tunnelPort = proxyPort
 
     console.log(`⏳ Waiting for proxy server on port ${tunnelPort} to be ready...`)
 
@@ -639,32 +379,22 @@ export async function startDevServer(userId: string, sandboxId: string, storeUrl
     })
 
     // ========================================================================
-    // STEP 7: CREATE PUBLIC TUNNEL
+    // STEP 7: CREATE PUBLIC TUNNEL (REQUIRED)
     // ========================================================================
 
-    let publicTunnelUrl: string | undefined
+    console.log('🌍 Creating public tunnel for remote access...')
+    const tunnelResult = await createTunnel(
+      tunnelPort,
+      userId,
+      sandboxId
+    )
 
-    try {
-      console.log('🌍 Creating public tunnel for remote access...')
-      const tunnelResult = await createTunnel(
-        tunnelPort,
-        userId,
-        sandboxId
-      )
-
-      if (tunnelResult.success && tunnelResult.publicUrl) {
-        publicTunnelUrl = tunnelResult.publicUrl
-        console.log(`✅ Public tunnel created: ${publicTunnelUrl}`)
-      } else {
-        console.warn('⚠️  Failed to create tunnel:', tunnelResult.error)
-        console.warn('⚠️  Continuing with local URL only')
-        // Don't fail the entire operation - local URL still works
-      }
-    } catch (tunnelError) {
-      console.warn('⚠️  Tunnel creation error:', tunnelError)
-      console.warn('⚠️  Continuing with local URL only')
-      // Continue without tunnel - local development still works
+    if (!tunnelResult.success || !tunnelResult.publicUrl) {
+      throw new Error(`Failed to create ngrok tunnel: ${tunnelResult.error || 'Unknown error'}`)
     }
+
+    const publicTunnelUrl = tunnelResult.publicUrl
+    console.log(`✅ Public tunnel created: ${publicTunnelUrl}`)
 
     // ========================================================================
     // STEP 8: LOG SUCCESSFUL STARTUP
@@ -672,7 +402,7 @@ export async function startDevServer(userId: string, sandboxId: string, storeUrl
 
     console.log(`✅ Dev server started successfully:`)
     console.log(`   Local:  http://127.0.0.1:${tunnelPort}`)
-    console.log(`   Public: ${publicTunnelUrl || 'Not available'}`)
+    console.log(`   Public: ${publicTunnelUrl}`)
 
     if (errorOutput) {
       console.warn('⚠️  Dev server warnings:', errorOutput)
@@ -686,9 +416,9 @@ export async function startDevServer(userId: string, sandboxId: string, storeUrl
       success: true,
       output: `✅ Dev server with X-Frame-Options removal proxy started successfully in background.\n${output}`,
       assignedPort,    // Main port (proxy) for user access
-      shopifyPort,     // Direct Shopify server port
-      proxyPort,       // Proxy server port (same as assignedPort)
-      publicUrl: publicTunnelUrl  // Public ngrok URL (if available)
+      shopifyPort: devPort,     // Direct Shopify server port (passed as parameter)
+      proxyPort,       // Proxy server port (passed as parameter)
+      publicUrl: publicTunnelUrl  // Public ngrok URL (required)
     }
   } catch (error: unknown) {
     console.error('Error starting dev server:', error)

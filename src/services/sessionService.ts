@@ -13,6 +13,8 @@ export interface Session {
   created_at?: string
   completed_at?: string
   claude_session_id?: string
+  dev_port?: number
+  proxy_port?: number
 }
 
 export async function createSession(
@@ -113,6 +115,52 @@ export async function getThemePathFromSession(
     return { themePath, error: null }
   } catch {
     return { themePath: null, error: 'Database error' }
+  }
+}
+
+export async function updateSessionPorts(
+  sessionId: string,
+  devPort: number,
+  proxyPort: number
+): Promise<{ success: boolean; error: string | null }> {
+  try {
+    const { error } = await supabase
+      .from('agent_sessions')
+      .update({
+        dev_port: devPort,
+        proxy_port: proxyPort
+      })
+      .eq('id', sessionId)
+
+    if (error) {
+      console.error('Supabase error updating session ports:', error)
+      return { success: false, error: `Failed to update session ports: ${error.message || JSON.stringify(error)}` }
+    }
+
+    return { success: true, error: null }
+  } catch (err) {
+    console.error('Exception updating session ports:', err)
+    return { success: false, error: `Database error: ${err instanceof Error ? err.message : 'Unknown error'}` }
+  }
+}
+
+export async function getSessionById(
+  sessionId: string
+): Promise<{ data: Session | null; error: string | null }> {
+  try {
+    const { data, error } = await supabase
+      .from('agent_sessions')
+      .select('*')
+      .eq('id', sessionId)
+      .single()
+
+    if (error) {
+      return { data: null, error: 'Session not found' }
+    }
+
+    return { data, error: null }
+  } catch {
+    return { data: null, error: 'Database error' }
   }
 }
 

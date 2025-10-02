@@ -18,6 +18,8 @@ export interface UserSandbox {
   sandbox_id?: string
   shopify_template_id?: string
   theme_id?: number
+  dev_port?: number
+  proxy_port?: number
   status?: string
   created_at?: string
   last_used?: string
@@ -157,3 +159,4 @@ export async function updateSandboxThemeId(
     return { success: false, error: 'Unexpected database error' }
   }
 }
+

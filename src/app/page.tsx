@@ -13,6 +13,12 @@ export default function Home() {
   const [publicUrl, setPublicUrl] = useState('')
   const [localUrl, setLocalUrl] = useState('')
 
+  // Refresh server state
+  const [refreshLoading, setRefreshLoading] = useState(false)
+  const [refreshMessage, setRefreshMessage] = useState('')
+  const [refreshError, setRefreshError] = useState('')
+  const [sandboxId, setSandboxId] = useState('')
+
   // Chat testing state
   const [sessionId, setSessionId] = useState('')
   const [chatMessage, setChatMessage] = useState('')
@@ -64,6 +70,10 @@ export default function Home() {
         if (data.sessionId) {
           setSessionId(data.sessionId)
         }
+        // If we got a sandboxId back, set it for refresh server
+        if (data.sandboxId) {
+          setSandboxId(data.sandboxId)
+        }
       } else {
         setError(`❌ ${data.error}`)
       }
@@ -72,6 +82,45 @@ export default function Home() {
       console.error('Error:', err)
     } finally {
       setLoading(false)
+    }
+  }
+
+  const handleRefreshServer = async () => {
+    if (!sandboxId.trim()) {
+      setRefreshError('Please enter a Sandbox ID')
+      return
+    }
+
+    setRefreshLoading(true)
+    setRefreshError('')
+    setRefreshMessage('')
+
+    try {
+      const response = await fetch('/api/refresh-server', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          sandboxId: sandboxId.trim()
+        }),
+      })
+
+      const data = await response.json()
+
+      if (response.ok) {
+        setRefreshMessage(`✅ ${data.message}`)
+        // Update URLs with refreshed values
+        setPublicUrl(data.publicUrl || '')
+        setLocalUrl(data.localUrl || data.previewUrl || '')
+      } else {
+        setRefreshError(`❌ ${data.error}`)
+      }
+    } catch (err) {
+      setRefreshError('❌ Failed to connect to the server')
+      console.error('Refresh Error:', err)
+    } finally {
+      setRefreshLoading(false)
     }
   }
 
@@ -231,6 +280,81 @@ export default function Home() {
             This will create a Supabase user sandbox record for this user + Shopify URL combination (if it doesn&apos;t exist) and
             generate a theme folder at <code className="bg-gray-100 px-1 py-0.5 rounded">/themes/user_{'{'}{userId}{'}'}/theme_1</code>
           </p>
+        </div>
+
+        {/* Divider */}
+        <div className="w-full max-w-md border-t border-gray-300 my-8"></div>
+
+        {/* Refresh Server Section */}
+        <h2 className="text-xl font-bold text-center">🔄 Refresh Development Server</h2>
+
+        <div className="flex flex-col gap-4 w-full max-w-md">
+          <div className="text-center text-sm text-gray-600">
+            <p>
+              Kill and restart server processes for a specific sandbox.
+              Uses sandbox-specific ports to target only that sandbox's servers.
+            </p>
+          </div>
+
+          <div className="flex flex-col gap-2">
+            <label htmlFor="refreshSandboxId" className="text-sm font-medium">
+              Sandbox ID for Refresh:
+            </label>
+            <input
+              id="refreshSandboxId"
+              type="text"
+              value={sandboxId}
+              onChange={(e) => setSandboxId(e.target.value)}
+              placeholder="Enter sandbox ID to refresh"
+              className="px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-orange-500 focus:border-transparent"
+              disabled={refreshLoading}
+            />
+            <p className="text-xs text-gray-500">
+              Use the sandbox ID from theme creation above
+            </p>
+          </div>
+
+          <button
+            onClick={handleRefreshServer}
+            disabled={refreshLoading || !sandboxId.trim()}
+            className="bg-orange-600 hover:bg-orange-700 disabled:bg-gray-400 disabled:cursor-not-allowed text-white font-medium py-3 px-6 rounded-md transition-colors"
+          >
+            {refreshLoading ? '🔄 Refreshing Servers...' : '🔄 Refresh Development Server'}
+          </button>
+
+          {refreshMessage && (
+            <div className="p-4 bg-green-50 border border-green-200 rounded-md text-green-800 text-sm">
+              <div className="font-medium mb-2">{refreshMessage}</div>
+              {publicUrl && (
+                <div className="mt-2 space-y-1">
+                  <div>
+                    <strong>🌍 Public URL (ngrok):</strong>
+                    <a href={publicUrl} target="_blank" rel="noopener noreferrer" className="ml-2 text-blue-600 hover:underline break-all">
+                      {publicUrl}
+                    </a>
+                  </div>
+                  {localUrl && (
+                    <div>
+                      <strong>🏠 Local URL:</strong>
+                      <span className="ml-2 break-all">{localUrl}</span>
+                    </div>
+                  )}
+                </div>
+              )}
+              {!publicUrl && localUrl && (
+                <div className="mt-2">
+                  <strong>Preview URL:</strong>
+                  <span className="ml-2 break-all">{localUrl}</span>
+                </div>
+              )}
+            </div>
+          )}
+
+          {refreshError && (
+            <div className="p-3 bg-red-50 border border-red-200 rounded-md text-red-800 text-sm">
+              {refreshError}
+            </div>
+          )}
         </div>
 
         {/* Divider */}

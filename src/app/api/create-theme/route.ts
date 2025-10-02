@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { findUserSandbox, createUserSandbox, updateSandboxStatus, updateSandboxPreviewUrl, updateSandboxThemeId } from '@/services/userSandboxService'
 import { createThemeFolder, pullTheme, pushTheme, setupClaude, startDevServer } from '@/services/themeService'
 import { createSession } from '@/services/sessionService'
+import { getPortsForSandbox } from '@/services/portAllocationService'
 
 export async function POST(request: NextRequest) {
   try {
@@ -135,11 +136,27 @@ export async function POST(request: NextRequest) {
       console.log('✅ Claude integration setup complete')
 
       // ==========================================
-      // STEP 4: START DEVELOPMENT SERVER
+      // STEP 4: ALLOCATE PORTS
+      // ==========================================
+      console.log('🔌 Allocating ports for development server...')
+
+      const ports = await getPortsForSandbox(newSandbox.id)
+      if (!ports) {
+        await updateSandboxStatus(newSandbox.id, 'error')
+        return NextResponse.json(
+          { error: 'Failed to allocate ports - all 300 port slots may be in use' },
+          { status: 500 }
+        )
+      }
+
+      console.log(`✅ Ports allocated: dev=${ports.devPort}, proxy=${ports.proxyPort}`)
+
+      // ==========================================
+      // STEP 5: START DEVELOPMENT SERVER
       // ==========================================
       await updateSandboxStatus(newSandbox.id, 'setting-up-dev-server')
 
-      const devResult = await startDevServer(userId, newSandbox.id, storeUrl, apiKey, pushResult.themeId, storePassword, 'auto')
+      const devResult = await startDevServer(userId, newSandbox.id, storeUrl, apiKey, pushResult.themeId, ports.devPort, ports.proxyPort, storePassword)
 
       if (!devResult.success) {
         await updateSandboxStatus(newSandbox.id, 'error')
@@ -173,7 +190,7 @@ export async function POST(request: NextRequest) {
       }
 
       // ==========================================
-      // STEP 5: CREATE CHAT SESSION
+      // STEP 5: CREATE CHAT SESSION AND SAVE PORTS
       // ==========================================
       // Create chat session for this sandbox setup
       let sessionId: string | null = null
@@ -194,6 +211,8 @@ export async function POST(request: NextRequest) {
         console.warn('⚠️  Failed to create chat session:', error)
         // Don't fail the entire request, just log the warning
       }
+
+      // Ports already saved by getPortsForSandbox() - no need to save again
 
       await updateSandboxStatus(newSandbox.id, 'ready')
 
