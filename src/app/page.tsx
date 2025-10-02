@@ -26,6 +26,12 @@ export default function Home() {
   const [chatLoading, setChatLoading] = useState(false)
   const [chatError, setChatError] = useState('')
 
+  // Kill sandbox state
+  const [killSandboxId, setKillSandboxId] = useState('')
+  const [killLoading, setKillLoading] = useState(false)
+  const [killMessage, setKillMessage] = useState('')
+  const [killError, setKillError] = useState('')
+
   const handleCreateTheme = async () => {
     if (!userId.trim()) {
       setError('Please enter a User ID')
@@ -163,6 +169,44 @@ export default function Home() {
       console.error('Chat Error:', err)
     } finally {
       setChatLoading(false)
+    }
+  }
+
+  const handleKillSandbox = async () => {
+    if (!killSandboxId.trim()) {
+      setKillError('Please enter a Sandbox ID')
+      return
+    }
+
+    setKillLoading(true)
+    setKillError('')
+    setKillMessage('')
+
+    try {
+      const response = await fetch('/api/delete-sandbox', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          sandboxId: killSandboxId.trim()
+        }),
+      })
+
+      const data = await response.json()
+
+      if (response.ok) {
+        setKillMessage(`✅ ${data.message}`)
+        // Clear the input on success
+        setKillSandboxId('')
+      } else {
+        setKillError(`❌ ${data.error}`)
+      }
+    } catch (err) {
+      setKillError('❌ Failed to connect to the server')
+      console.error('Kill Sandbox Error:', err)
+    } finally {
+      setKillLoading(false)
     }
   }
 
@@ -415,6 +459,66 @@ export default function Home() {
           {chatError && (
             <div className="p-3 bg-red-50 border border-red-200 rounded-md text-red-800 text-sm">
               {chatError}
+            </div>
+          )}
+        </div>
+
+        {/* Divider */}
+        <div className="w-full max-w-md border-t border-gray-300 my-8"></div>
+
+        {/* Kill Sandbox Section */}
+        <h2 className="text-xl font-bold text-center">🗑️ Kill & Delete Sandbox</h2>
+
+        <div className="flex flex-col gap-4 w-full max-w-md">
+          <div className="text-center text-sm text-gray-600">
+            <p className="mb-2">
+              Completely remove a sandbox and all associated resources:
+            </p>
+            <ul className="text-xs text-left list-disc list-inside space-y-1">
+              <li>Kill development server processes</li>
+              <li>Close ngrok tunnels</li>
+              <li>Delete theme files and folders</li>
+              <li>Remove temporary files and logs</li>
+              <li>Free allocated ports</li>
+              <li>Delete database record</li>
+            </ul>
+          </div>
+
+          <div className="flex flex-col gap-2">
+            <label htmlFor="killSandboxId" className="text-sm font-medium">
+              Sandbox ID to Delete:
+            </label>
+            <input
+              id="killSandboxId"
+              type="text"
+              value={killSandboxId}
+              onChange={(e) => setKillSandboxId(e.target.value)}
+              placeholder="Enter sandbox ID to delete"
+              className="px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-red-500 focus:border-transparent"
+              disabled={killLoading}
+            />
+            <p className="text-xs text-gray-500">
+              ⚠️ Warning: This action cannot be undone!
+            </p>
+          </div>
+
+          <button
+            onClick={handleKillSandbox}
+            disabled={killLoading || !killSandboxId.trim()}
+            className="bg-red-600 hover:bg-red-700 disabled:bg-gray-400 disabled:cursor-not-allowed text-white font-medium py-3 px-6 rounded-md transition-colors"
+          >
+            {killLoading ? '🗑️ Deleting Sandbox...' : '🗑️ Kill & Delete Sandbox'}
+          </button>
+
+          {killMessage && (
+            <div className="p-4 bg-green-50 border border-green-200 rounded-md text-green-800 text-sm">
+              <div className="font-medium">{killMessage}</div>
+            </div>
+          )}
+
+          {killError && (
+            <div className="p-3 bg-red-50 border border-red-200 rounded-md text-red-800 text-sm">
+              {killError}
             </div>
           )}
         </div>
